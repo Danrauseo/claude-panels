@@ -1,0 +1,73 @@
+{
+  "name": "claude-panels",
+  "version": "0.1.0",
+  "description": "Run several Claude Code sessions side by side in one Mac app",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "postinstall": "electron-rebuild -f -w node-pty",
+    "create-cert": "bash build/create-signing-cert.sh",
+    "dist": "node build/build-app.js",
+    "install-app": "npm run dist && node build/install-app.js"
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/addon-web-links": "^0.12.0",
+    "@xterm/xterm": "^6.0.0",
+    "node-pty": "^1.1.0"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^4.2.1",
+    "electron": "^44.7.2",
+    "electron-builder": "^26.15.3"
+  },
+  "productName": "Claude Panels",
+  "build": {
+    "appId": "io.github.danrauseo.claude-panels",
+    "productName": "Claude Panels",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer/**",
+      "lib/**",
+      "mcp/**",
+      "package.json",
+      "!**/*.map",
+      "!node_modules/@xterm/*/src/**",
+      "!node_modules/node-pty/prebuilds/win32-*/**",
+      "!node_modules/node-pty/prebuilds/darwin-x64/**",
+      "!node_modules/node-pty/src/**",
+      "!node_modules/node-pty/deps/**",
+      "!node_modules/node-pty/third_party/**"
+    ],
+    "asarUnpack": [
+      "node_modules/node-pty/**",
+      "lib/**",
+      "mcp/**"
+    ],
+    "mac": {
+      "target": [
+        {
+          "target": "dir"
+        }
+      ],
+      "category": "public.app-category.developer-tools",
+      "icon": "build/icon.icns",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "notarize": false
+    }
+  },
+  "author": "Danrauseo",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Danrauseo/claude-panels.git"
+  }
+}

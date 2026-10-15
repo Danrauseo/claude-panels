@@ -1,0 +1,5 @@
+node_modules/
+dist/
+.DS_Store
+# Your own signing certificate name, if it is not "Claude Panels Signing"
+build/signing-identity.local

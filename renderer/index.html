@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'" />
+  <title>Claude Panels</title>
+  <link rel="stylesheet" href="../node_modules/@xterm/xterm/css/xterm.css" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="toolbar">
+    <button id="filter-chip" class="chip" title="Show all terminals (⌘S)" hidden>
+      Showing <span id="filter-name"></span> <kbd>⌘S</kbd> show all
+    </button>
+    <div class="toolbar-buttons">
+      <button id="new-btn" class="btn" title="New terminal">New <kbd>⌘N</kbd></button>
+      <button id="search-btn" class="btn" title="Find a past session">Sessions <kbd>⌘K</kbd></button>
+      <button id="stack-btn" class="btn" title="Stack view">Stack <kbd>⌘S</kbd></button>
+      <button id="layout-btn" class="btn" title="Move the last panel to the bottom or the side" hidden>
+        <span id="layout-label">Layout</span> <kbd>⌘L</kbd>
+      </button>
+      <button id="settings-btn" class="btn" title="Settings">Settings <kbd>⌘,</kbd></button>
+    </div>
+  </header>
+
+  <main id="grid" class="grid"></main>
+
+  <section id="stack" class="stack" hidden>
+    <div class="stack-head">
+      <span class="stack-title">Open harnesses</span>
+      <span class="hints"><kbd>⌘1</kbd> to <kbd>⌘9</kbd> or click to show one harness &nbsp; <kbd>⌘S</kbd> back to all terminals</span>
+    </div>
+    <div id="stack-cards" class="stack-cards"></div>
+  </section>
+
+  <section id="empty" class="empty">
+    <div class="shortcuts">
+      <kbd id="restore-key" hidden>⌘R</kbd><span id="restore-text" hidden></span>
+      <kbd>⌘N</kbd><span>New terminal</span>
+      <kbd>⌘K</kbd><span>Find a past session</span>
+      <kbd>/</kbd><span>Pick a harness in a new terminal</span>
+      <kbd>⌘S</kbd><span>Stack view of open harnesses</span>
+      <kbd>⌘U</kbd><span>Add files to the selected terminal</span>
+      <kbd>⌘W</kbd><span>Close terminal</span>
+      <kbd>⌘1 to 9</kbd><span>Jump to a terminal</span>
+    </div>
+  </section>
+
+  <dialog id="search-dialog" class="palette">
+    <input id="search-input" type="text" placeholder="Search past Claude sessions" spellcheck="false" autocomplete="off" />
+    <div id="search-list" class="list"></div>
+    <div class="hints"><kbd>↑</kbd><kbd>↓</kbd> choose <kbd>↵</kbd> resume <kbd>esc</kbd> close</div>
+  </dialog>
+
+  <dialog id="settings-dialog">
+    <form method="dialog" id="settings-form">
+      <h2>Settings</h2>
+
+      <fieldset>
+        <legend>When Claude creates a file</legend>
+        <label class="radio"><input type="radio" name="fileMode" value="open" /> Open it straight away</label>
+        <label class="radio"><input type="radio" name="fileMode" value="link" /> Give me a link so I can open it when it suits me</label>
+        <label class="radio"><input type="radio" name="fileMode" value="off" /> Do nothing extra</label>
+      </fieldset>
+
+      <div class="field" id="prompt-field">
+        <label for="prompt-text">Instruction added to Claude for this choice</label>
+        <textarea id="prompt-text" rows="5"></textarea>
+        <button type="button" id="prompt-reset" class="link-btn">Reset to the default wording</button>
+      </div>
+
+      <div class="field">
+        <label>Harnesses</label>
+        <small>Type <code>/name</code> in a new terminal to start Claude in one of these folders. You can also add one there with <code>/add name</code>.</small>
+        <div id="harness-list" class="harness-list"></div>
+        <div class="harness-add">
+          <input id="harness-name" type="text" placeholder="name" spellcheck="false" />
+          <button type="button" id="harness-add-btn" class="btn">Choose folder and add</button>
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="claude-command">Command used to start Claude</label>
+        <input id="claude-command" type="text" spellcheck="false" />
+        <small>You can add options here, for example <code>claude --model opus</code>.</small>
+      </div>
+
+      <div class="field inline">
+        <label for="font-size">Text size</label>
+        <input id="font-size" type="number" min="9" max="24" />
+      </div>
+
+      <p class="note">Changes to the instruction and the command apply to terminals you open after saving.</p>
+
+      <div class="dialog-buttons">
+        <button value="cancel" class="btn">Cancel</button>
+        <button value="save" id="settings-save" class="btn">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="../node_modules/@xterm/xterm/lib/xterm.js"></script>
+  <script src="../node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
+  <script src="../node_modules/@xterm/addon-web-links/lib/addon-web-links.js"></script>
+  <script src="renderer.js"></script>
+</body>
+</html>
