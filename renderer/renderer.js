@@ -7,6 +7,8 @@ const layoutBtn = document.getElementById('layout-btn');
 const layoutLabel = document.getElementById('layout-label');
 const filterChip = document.getElementById('filter-chip');
 const filterName = document.getElementById('filter-name');
+const zoomChip = document.getElementById('zoom-chip');
+const zoomName = document.getElementById('zoom-name');
 const stackEl = document.getElementById('stack');
 const stackCards = document.getElementById('stack-cards');
 
@@ -18,6 +20,7 @@ const pendingData = new Map(); // output that arrives before a panel knows its i
 let focused = null;
 let view = 'grid'; // 'grid' shows terminals, 'stack' shows one card per open harness
 let filterKey = null; // when set, only terminals in this harness are shown
+let zoomed = null; // when set, this one panel fills the window
 let restorable = []; // panels open when the app last closed, restored with ⌘R
 
 const TERM_THEME = {
@@ -161,7 +164,16 @@ function gridFor(count) {
 }
 
 function visiblePanels() {
+  if (zoomed && panels.includes(zoomed)) return [zoomed];
   return panels.filter((p) => !filterKey || !p.cwd || groupOf(p).key === filterKey);
+}
+
+// ⌘F makes the selected panel fill the window. Pressing it again shows the other panels again.
+function toggleZoom() {
+  if (view !== 'grid') return;
+  zoomed = zoomed ? null : focused;
+  applyLayout();
+  setFocus(focused);
 }
 
 function applyLayout() {
@@ -171,7 +183,7 @@ function applyLayout() {
   const bottom = settings.oddLayout !== 'side';
 
   emptyState.hidden = panels.length > 0 || view === 'stack';
-  layoutBtn.hidden = !odd || view === 'stack';
+  layoutBtn.hidden = !odd || view === 'stack' || Boolean(zoomed);
   layoutLabel.textContent = bottom ? 'Last panel: bottom' : 'Last panel: side';
 
   let cols;
@@ -197,7 +209,10 @@ function applyLayout() {
     p.head.querySelector('.num').textContent = `${p.number}`;
   }
 
-  filterChip.hidden = !filterKey || view === 'stack';
+  if (zoomed && !panels.includes(zoomed)) zoomed = null;
+  zoomChip.hidden = !zoomed || view === 'stack';
+  if (zoomed) zoomName.textContent = `Panel ${zoomed.number}`;
+  filterChip.hidden = !filterKey || view === 'stack' || Boolean(zoomed);
   if (filterKey) filterName.textContent = groupByKey(filterKey)?.name || '';
 }
 
@@ -238,6 +253,7 @@ function sessionName(panel) {
 
 function addPanel(wantedNumber) {
   if (view === 'stack') showGrid();
+  zoomed = null;
   const panel = { ptyId: null, term: null, fit: null, cwd: null, running: false, sessionId: null, harnessName: null };
   panel.number = freeNumber(wantedNumber);
 
@@ -284,6 +300,7 @@ function closePanel(panel) {
   panel.el.remove();
   const i = panels.indexOf(panel);
   panels.splice(i, 1);
+  if (zoomed === panel) zoomed = null;
   if (filterKey && !panels.some((p) => p.cwd && groupOf(p).key === filterKey)) filterKey = null;
   applyLayout();
   const shown = visiblePanels();
@@ -568,7 +585,7 @@ async function launch(panel, dir, { resumeId = null, title = null, harnessName =
 
   term.attachCustomKeyEventHandler((e) => {
     // Shift+Enter adds a new line in Claude instead of sending the message.
-    if (e.type === 'keydown' && e.key === 'Enter' && e.shiftKey) {
+    if (e.type === 'keydown' && e.key === 'Enter' && e.shiftKey && !e.metaKey) {
       if (panel.ptyId !== null) api.write(panel.ptyId, '\x1b\r');
       return false;
     }
@@ -686,6 +703,7 @@ function groupByKey(key) {
 }
 
 function showPanel(panel) {
+  if (zoomed) zoomed = panel; // in full-window mode, ⌘1 to ⌘9 switch which panel fills the window
   if (filterKey && panel.cwd && groupOf(panel).key !== filterKey) filterKey = null;
   applyLayout();
   setFocus(panel);
@@ -728,6 +746,7 @@ function toggleStack() {
 
 function openGroup(key, panel) {
   filterKey = key;
+  zoomed = null;
   showGrid();
   if (panel) setFocus(panel);
 }
@@ -967,6 +986,7 @@ document.getElementById('settings-btn').addEventListener('click', openSettings);
 layoutBtn.addEventListener('click', toggleOddLayout);
 document.getElementById('stack-btn').addEventListener('click', toggleStack);
 filterChip.addEventListener('click', toggleStack);
+zoomChip.addEventListener('click', toggleZoom);
 
 api.onMenu('new', () => addPanel());
 api.onMenu('search', openSearch);
@@ -974,6 +994,7 @@ api.onMenu('browse', browseShortcut);
 api.onMenu('upload', addFilesToTerminal);
 api.onMenu('close', () => view === 'grid' && closePanel(focused));
 api.onMenu('layout', toggleOddLayout);
+api.onMenu('zoom', toggleZoom);
 api.onMenu('stack', toggleStack);
 api.onMenu('restore', restoreWorkspace);
 api.onMenu('settings', openSettings);

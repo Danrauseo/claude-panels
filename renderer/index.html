@@ -12,6 +12,9 @@
     <button id="filter-chip" class="chip" title="Show all terminals (⌘S)" hidden>
       Showing <span id="filter-name"></span> <kbd>⌘S</kbd> show all
     </button>
+    <button id="zoom-chip" class="chip" title="Show all panels (⌘F)" hidden>
+      <span id="zoom-name"></span> fills the window <kbd>⌘F</kbd> show all
+    </button>
     <div class="toolbar-buttons">
       <button id="new-btn" class="btn" title="New terminal">New <kbd>⌘N</kbd></button>
       <button id="search-btn" class="btn" title="Find a past session">Sessions <kbd>⌘K</kbd></button>
@@ -41,6 +44,7 @@
       <kbd>/</kbd><span>Pick a harness in a new terminal</span>
       <kbd>⌘S</kbd><span>Stack view of open harnesses</span>
       <kbd>⌘U</kbd><span>Add files to the selected terminal</span>
+      <kbd>⌘F</kbd><span>Make the selected panel fill the window</span>
       <kbd>⌘W</kbd><span>Close terminal</span>
       <kbd>⌘1 to 9</kbd><span>Jump to a terminal</span>
     </div>
@@ -91,6 +95,35 @@
       </div>
 
       <p class="note">Changes to the instruction and the command apply to terminals you open after saving.</p>
+
+      <div class="field">
+        <label>Keyboard shortcuts</label>
+        <div class="shortcut-guide">
+          <kbd>⌘N</kbd><span>New terminal</span>
+          <kbd>⌘W</kbd><span>Close the selected terminal</span>
+          <kbd>⌘1 to ⌘9</kbd><span>Jump to that terminal</span>
+          <kbd>⌘F</kbd><span>Make the selected terminal fill the window, or show all again</span>
+          <kbd>⌘K</kbd><span>Search past Claude sessions and resume one</span>
+          <kbd>⌘S</kbd><span>Stack view of open harnesses, or back to all terminals</span>
+          <kbd>⌘R</kbd><span>Bring back the terminals open when the app last closed</span>
+          <kbd>⌘U</kbd><span>Add file paths to the selected terminal</span>
+          <kbd>⌘O</kbd><span>Choose a folder to start Claude in</span>
+          <kbd>⌘L</kbd><span>With an odd number of terminals, move the last one to the bottom or side</span>
+          <kbd>⌘,</kbd><span>Settings</span>
+          <kbd>⇧↵</kbd><span>New line in your message to Claude</span>
+        </div>
+        <label class="guide-sub">In a new terminal</label>
+        <div class="shortcut-guide">
+          <kbd>/name</kbd><span>Start Claude in a saved harness</span>
+          <kbd>/add name</kbd><span>Choose a folder and save it as a harness</span>
+          <kbd>/browse</kbd><span>Choose a folder</span>
+          <kbd>/home</kbd><span>Start in your home folder</span>
+        </div>
+        <label class="guide-sub">Inside Claude</label>
+        <div class="shortcut-guide">
+          <kbd>@2</kbd><span>Use the session in terminal 2. Claude messages, searches or reads it as needed.</span>
+        </div>
+      </div>
 
       <div class="dialog-buttons">
         <button value="cancel" class="btn">Cancel</button>

@@ -433,6 +433,7 @@ function buildMenu() {
         { type: 'separator' },
         { label: 'Stack View', accelerator: 'CmdOrCtrl+S', click: () => send('menu:stack') },
         { label: 'Resume Terminals From Last Time', accelerator: 'CmdOrCtrl+R', click: () => send('menu:restore') },
+        { label: 'Fill Window With Panel', accelerator: 'CmdOrCtrl+F', click: () => send('menu:zoom') },
         { label: 'Move Odd Panel to Bottom or Side', accelerator: 'CmdOrCtrl+L', click: () => send('menu:layout') },
         { label: 'Settings', accelerator: 'CmdOrCtrl+,', click: () => send('menu:settings') },
       ],

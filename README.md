@@ -42,10 +42,11 @@ For quick testing without installing, run `npm start`.
 | ⌘R | Resume the terminals you had open when the app last closed |
 | ⌘O | Choose a folder for a new terminal |
 | ⌘U | Choose files and add their paths to the selected terminal |
+| ⌘F | Make the selected terminal fill the window. Press it again to show all terminals. While one fills the window, ⌘1 to ⌘9 switch which one |
 | ⌘W | Close the selected terminal |
 | ⌘1 to ⌘9 | Jump to a terminal, or in the stack view open a harness |
 | ⌘L | Put the last panel at the bottom or on the side when an odd number are open |
-| ⌘, | Settings |
+| ⌘, | Settings, which also lists these shortcuts |
 | Shift+Enter | New line in Claude |
 
 ## Starting Claude in a harness
