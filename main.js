@@ -358,6 +358,68 @@ function readActivity(file) {
   };
 }
 
+// Which other terminals a session has mentioned: "@2" or "@2-wrap" typed by the user, messages
+// Claude sent to another session, and the panels search and read tools. Files can be large, so
+// each one is read once and then only the new part is read on later checks.
+const mentionCache = new Map(); // file -> { offset, rest, refs: Map<key, { number, name }> }
+
+function addRef(refs, number, name) {
+  const key = name || String(number);
+  if (!refs.has(key)) refs.set(key, { number, name: name || null });
+}
+
+function scanMentions(entry, refs) {
+  const content = entry.message?.content;
+  if (entry.type === 'user' && !entry.isMeta) {
+    const texts = typeof content === 'string' ? [content] : Array.isArray(content) ? content.filter((c) => c.type === 'text').map((c) => c.text) : [];
+    for (const text of texts) {
+      if (!text || text.trimStart().startsWith('<')) continue;
+      for (const m of text.matchAll(/(?:^|[\s(])@"?(\d+)(-[\w-]+)?/g)) addRef(refs, Number(m[1]), m[2] ? m[1] + m[2] : null);
+    }
+  } else if (entry.type === 'assistant' && Array.isArray(content)) {
+    for (const c of content) {
+      if (c.type !== 'tool_use') continue;
+      const target = c.name === 'SendMessage' ? c.input?.to : /^mcp__panels__(search|read)_session$/.test(c.name) ? c.input?.session : null;
+      const m = String(target || '').trim().replace(/^@/, '').match(/^(\d+)(-[\w-]+)?/);
+      if (m) addRef(refs, Number(m[1]), m[2] ? m[1] + m[2] : null);
+    }
+  }
+}
+
+function readMentions(file) {
+  const size = fs.statSync(file).size;
+  let cached = mentionCache.get(file);
+  if (!cached || size < cached.offset) cached = { offset: 0, rest: '', refs: new Map() };
+  if (size > cached.offset) {
+    const fd = fs.openSync(file, 'r');
+    try {
+      const text = cached.rest + readChunk(fd, cached.offset, size - cached.offset);
+      const lines = text.split('\n');
+      cached.rest = lines.pop(); // the last line may not be finished yet
+      for (const line of lines) {
+        if (!/"type":"(user|assistant)"/.test(line) || !line.includes('@') && !line.includes('"tool_use"')) continue;
+        try { scanMentions(JSON.parse(line), cached.refs); } catch {}
+      }
+    } finally {
+      fs.closeSync(fd);
+    }
+    cached.offset = size;
+    mentionCache.set(file, cached);
+  }
+  return [...cached.refs.values()];
+}
+
+ipcMain.handle('sessions:mentions', (_e, ids) => {
+  if (ids.some((id) => !sessionFiles.has(id))) listSessions();
+  const result = {};
+  for (const id of ids) {
+    const file = sessionFiles.get(id);
+    if (!file) continue;
+    try { result[id] = readMentions(file); } catch {}
+  }
+  return result;
+});
+
 ipcMain.handle('sessions:activity', (_e, ids) => {
   if (ids.some((id) => !sessionFiles.has(id))) listSessions();
   const result = {};

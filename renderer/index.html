@@ -15,6 +15,7 @@
     <button id="zoom-chip" class="chip" title="Show all panels (⌘F)" hidden>
       <span id="zoom-name"></span> fills the window <kbd>⌘F</kbd> show all
     </button>
+    <button id="nav-chip" class="chip" title="Back to the panel you came from (⌘↑)" hidden></button>
     <div class="toolbar-buttons">
       <button id="new-btn" class="btn" title="New terminal">New <kbd>⌘N</kbd></button>
       <button id="search-btn" class="btn" title="Find a past session">Sessions <kbd>⌘K</kbd></button>
@@ -103,6 +104,9 @@
           <kbd>⌘W</kbd><span>Close the selected terminal</span>
           <kbd>⌘1 to ⌘9</kbd><span>Jump to that terminal</span>
           <kbd>⌘F</kbd><span>Make the selected terminal fill the window, or show all again</span>
+          <kbd>⌘↓</kbd><span>Show the sessions this terminal mentioned with @, full window</span>
+          <kbd>⌘← ⌘→</kbd><span>Move between those mentioned sessions</span>
+          <kbd>⌘↑</kbd><span>Go back to the terminal you started from</span>
           <kbd>⌘K</kbd><span>Search past Claude sessions and resume one</span>
           <kbd>⌘S</kbd><span>Stack view of open harnesses, or back to all terminals</span>
           <kbd>⌘R</kbd><span>Bring back the terminals open when the app last closed</span>

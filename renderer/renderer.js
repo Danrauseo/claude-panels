@@ -9,6 +9,7 @@ const filterChip = document.getElementById('filter-chip');
 const filterName = document.getElementById('filter-name');
 const zoomChip = document.getElementById('zoom-chip');
 const zoomName = document.getElementById('zoom-name');
+const navChip = document.getElementById('nav-chip');
 const stackEl = document.getElementById('stack');
 const stackCards = document.getElementById('stack-cards');
 
@@ -21,6 +22,10 @@ let focused = null;
 let view = 'grid'; // 'grid' shows terminals, 'stack' shows one card per open harness
 let filterKey = null; // when set, only terminals in this harness are shown
 let zoomed = null; // when set, this one panel fills the window
+// Moving between mentioned sessions. Each level remembers the panel you came from (the mother),
+// the sessions it mentioned (its children), which child is showing, and what was showing before.
+let navStack = []; // [{ mother, children, index, before }]
+const mentionMap = new Map(); // panel -> the open panels its session has mentioned
 let restorable = []; // panels open when the app last closed, restored with ⌘R
 
 const TERM_THEME = {
@@ -171,6 +176,7 @@ function visiblePanels() {
 // ⌘F makes the selected panel fill the window. Pressing it again shows the other panels again.
 function toggleZoom() {
   if (view !== 'grid') return;
+  navStack = [];
   zoomed = zoomed ? null : focused;
   applyLayout();
   setFocus(focused);
@@ -210,7 +216,22 @@ function applyLayout() {
   }
 
   if (zoomed && !panels.includes(zoomed)) zoomed = null;
-  zoomChip.hidden = !zoomed || view === 'stack';
+  navStack = navStack.filter((lvl) => panels.includes(lvl.mother) && lvl.children.some((c) => panels.includes(c)));
+  navChip.hidden = !navStack.length || view === 'stack';
+  if (navStack.length) {
+    const top = navStack[navStack.length - 1];
+    navChip.innerHTML = '';
+    navChip.append(
+      el('span', null, `${top.mother.name || 'Panel ' + top.mother.number} mentioned `),
+      el('b', null, top.children[top.index].name || `panel ${top.children[top.index].number}`),
+      el('span', null, `  ${top.index + 1} of ${top.children.length} `),
+      el('kbd', null, '⌘← ⌘→'),
+      el('span', null, ' switch '),
+      el('kbd', null, '⌘↑'),
+      el('span', null, ' back')
+    );
+  }
+  zoomChip.hidden = !zoomed || view === 'stack' || navStack.length > 0;
   if (zoomed) zoomName.textContent = `Panel ${zoomed.number}`;
   filterChip.hidden = !filterKey || view === 'stack' || Boolean(zoomed);
   if (filterKey) filterName.textContent = groupByKey(filterKey)?.name || '';
@@ -254,12 +275,19 @@ function sessionName(panel) {
 function addPanel(wantedNumber) {
   if (view === 'stack') showGrid();
   zoomed = null;
+  navStack = [];
   const panel = { ptyId: null, term: null, fit: null, cwd: null, running: false, sessionId: null, harnessName: null };
   panel.number = freeNumber(wantedNumber);
 
   panel.el = el('div', 'panel');
   panel.head = el('div', 'panel-head');
-  panel.head.append(el('span', 'num'), el('span', 'title', 'New terminal'), el('span', 'path'), el('span', 'status'));
+  panel.head.append(
+    el('span', 'num'),
+    el('span', 'title', 'New terminal'),
+    el('span', 'path'),
+    el('span', 'mentions'),
+    el('span', 'status')
+  );
   const closeBtn = el('button', 'close', '×');
   closeBtn.title = 'Close (⌘W)';
   closeBtn.addEventListener('click', (e) => {
@@ -703,6 +731,7 @@ function groupByKey(key) {
 }
 
 function showPanel(panel) {
+  navStack = [];
   if (zoomed) zoomed = panel; // in full-window mode, ⌘1 to ⌘9 switch which panel fills the window
   if (filterKey && panel.cwd && groupOf(panel).key !== filterKey) filterKey = null;
   applyLayout();
@@ -736,6 +765,7 @@ function showStack() {
 
 // ⌘S opens the stack view. From the stack view or a filtered view it goes back to all terminals.
 function toggleStack() {
+  navStack = [];
   if (view === 'stack' || filterKey) {
     filterKey = null;
     showGrid();
@@ -879,6 +909,105 @@ async function restoreWorkspace() {
   }
 }
 
+// ---------- Mentioned sessions (⌘↓ ⌘← ⌘→ ⌘↑) ----------
+
+// The open panel a mention points at: an exact session name such as "2-wrap" first, then the number.
+function panelForRef(ref) {
+  return (ref.name && panels.find((p) => p.name === ref.name)) || panels.find((p) => p.number === ref.number && p.cwd);
+}
+
+function flashNote(panel, text) {
+  const status = panel.head.querySelector('.status');
+  status.textContent = text;
+  clearTimeout(panel.noteTimer);
+  panel.noteTimer = setTimeout(() => {
+    status.textContent = panel.running || !panel.cwd ? '' : 'ended';
+  }, 3000);
+}
+
+// ⌘↓: show the first session this panel mentioned, full window. The panel you start from is the mother.
+function enterMentions(from = focused) {
+  if (view !== 'grid' || !from) return;
+  const children = (mentionMap.get(from) || []).filter((c) => panels.includes(c));
+  if (!children.length) return flashNote(from, 'No other terminal mentioned yet');
+  navStack.push({ mother: from, children, index: 0, before: zoomed });
+  showMention();
+}
+
+function showMention() {
+  const top = navStack[navStack.length - 1];
+  zoomed = top.children[top.index];
+  applyLayout();
+  setFocus(zoomed);
+}
+
+// ⌘← and ⌘→: move between the mentioned sessions.
+function moveMention(step) {
+  const top = navStack[navStack.length - 1];
+  if (!top) return;
+  top.index = (top.index + step + top.children.length) % top.children.length;
+  showMention();
+}
+
+// ⌘↑: go back to the mother panel, and to whatever was showing before.
+function leaveMentions() {
+  const top = navStack.pop();
+  if (!top) return;
+  zoomed = top.before && panels.includes(top.before) ? top.before : null;
+  applyLayout();
+  setFocus(top.mother);
+}
+
+// Every two seconds, work out which terminals each session has mentioned and whether those are
+// working (green) or waiting (orange), and show them in the panel's top bar.
+let mentionsRefreshing = false;
+async function refreshMentions() {
+  if (mentionsRefreshing || view !== 'grid') return;
+  const started = panels.filter((p) => p.sessionId && p.cwd);
+  if (!started.length) return;
+  mentionsRefreshing = true;
+  try {
+    const refs = await api.sessionMentions(started.map((p) => p.sessionId));
+    mentionMap.clear();
+    for (const p of started) {
+      const children = [];
+      for (const ref of refs[p.sessionId] || []) {
+        const child = panelForRef(ref);
+        if (child && child !== p && !children.includes(child)) children.push(child);
+      }
+      mentionMap.set(p, children.sort((a, b) => a.number - b.number));
+    }
+    const childIds = [...new Set([...mentionMap.values()].flat().filter((c) => c.running && c.sessionId).map((c) => c.sessionId))];
+    const activity = childIds.length ? await api.sessionActivity(childIds) : {};
+    for (const p of panels) drawMentions(p, mentionMap.get(p) || [], activity);
+  } finally {
+    mentionsRefreshing = false;
+  }
+}
+
+function drawMentions(panel, children, activity) {
+  const box = panel.head.querySelector('.mentions');
+  box.innerHTML = '';
+  children.forEach((child, i) => {
+    const act = activity[child.sessionId] || {};
+    const state = !child.running ? 'off' : act.pending || act.working ? 'working' : 'idle';
+    const words = { working: 'working', idle: 'waiting', off: 'ended' }[state];
+    const badge = el('button', `mention ${state}`);
+    badge.append(el('span', 'light'), el('span', null, child.name || `${child.number}`));
+    badge.title = `${child.name || 'Panel ' + child.number} is ${words}${act.pending ? ': ' + act.pending : ''}. ⌘↓ shows the mentioned sessions.`;
+    badge.addEventListener('mousedown', (e) => e.stopPropagation());
+    badge.addEventListener('click', (e) => {
+      e.stopPropagation();
+      setFocus(panel);
+      enterMentions(panel);
+      if (navStack.length && i > 0) moveMention(i);
+    });
+    box.append(badge);
+  });
+}
+
+setInterval(refreshMentions, 2000);
+
 // ---------- Settings dialog ----------
 
 const settingsDialog = document.getElementById('settings-dialog');
@@ -987,6 +1116,7 @@ layoutBtn.addEventListener('click', toggleOddLayout);
 document.getElementById('stack-btn').addEventListener('click', toggleStack);
 filterChip.addEventListener('click', toggleStack);
 zoomChip.addEventListener('click', toggleZoom);
+navChip.addEventListener('click', leaveMentions);
 
 api.onMenu('new', () => addPanel());
 api.onMenu('search', openSearch);
@@ -1008,6 +1138,18 @@ window.addEventListener('keydown', (e) => {
       if (stackGroups[n]) openGroup(stackGroups[n].key);
     } else if (panels.find((p) => p.number === n + 1)) {
       showPanel(panels.find((p) => p.number === n + 1));
+    }
+  } else if (e.metaKey && !e.shiftKey && !e.altKey && e.key.startsWith('Arrow')) {
+    const t = e.target;
+    const typingInBox = (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA') && !t.classList.contains('xterm-helper-textarea');
+    if (typingInBox || view !== 'grid' || searchDialog.open || settingsDialog.open) return;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      enterMentions(focused);
+    } else if (navStack.length) {
+      e.preventDefault();
+      if (e.key === 'ArrowUp') leaveMentions();
+      else moveMention(e.key === 'ArrowLeft' ? -1 : 1);
     }
   } else if (e.key === 'Escape' && view === 'stack' && !searchDialog.open && !settingsDialog.open) {
     toggleStack();

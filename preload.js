@@ -15,6 +15,7 @@ contextBridge.exposeInMainWorld('panelsApi', {
   openFile: (target) => ipcRenderer.invoke('file:open', target),
   listSessions: () => ipcRenderer.invoke('sessions:list'),
   sessionActivity: (ids) => ipcRenderer.invoke('sessions:activity', ids),
+  sessionMentions: (ids) => ipcRenderer.invoke('sessions:mentions', ids),
   pickFiles: (fallbackDir) => ipcRenderer.invoke('file:pick', fallbackDir),
 
   onMenu: (name, fn) => ipcRenderer.on(`menu:${name}`, fn),
