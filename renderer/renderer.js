@@ -26,6 +26,8 @@ let zoomed = null; // when set, this one panel fills the window
 // the sessions it mentioned (its children), which child is showing, and what was showing before.
 let navStack = []; // [{ mother, children, index, before }]
 const mentionMap = new Map(); // panel -> the open panels its session has mentioned
+// ⌘⇧↓ shows one group at once: the panel you started from and every session it mentioned.
+let family = null; // { mother, members }
 let restorable = []; // panels open when the app last closed, restored with ⌘R
 
 const TERM_THEME = {
@@ -170,6 +172,7 @@ function gridFor(count) {
 
 function visiblePanels() {
   if (zoomed && panels.includes(zoomed)) return [zoomed];
+  if (family) return family.members.filter((p) => panels.includes(p));
   return panels.filter((p) => !filterKey || !p.cwd || groupOf(p).key === filterKey);
 }
 
@@ -217,7 +220,18 @@ function applyLayout() {
 
   if (zoomed && !panels.includes(zoomed)) zoomed = null;
   navStack = navStack.filter((lvl) => panels.includes(lvl.mother) && lvl.children.some((c) => panels.includes(c)));
-  navChip.hidden = !navStack.length || view === 'stack';
+  if (family && !panels.includes(family.mother)) family = null;
+  navChip.hidden = (!navStack.length && !family) || view === 'stack';
+  if (!navStack.length && family) {
+    const others = family.members.filter((p) => p !== family.mother && panels.includes(p)).length;
+    navChip.innerHTML = '';
+    navChip.append(
+      el('b', null, family.mother.name || `Panel ${family.mother.number}`),
+      el('span', null, ` and ${others} mentioned session${others === 1 ? '' : 's'} `),
+      el('kbd', null, '⌘↑'),
+      el('span', null, ' back')
+    );
+  }
   if (navStack.length) {
     const top = navStack[navStack.length - 1];
     navChip.innerHTML = '';
@@ -233,7 +247,7 @@ function applyLayout() {
   }
   zoomChip.hidden = !zoomed || view === 'stack' || navStack.length > 0;
   if (zoomed) zoomName.textContent = `Panel ${zoomed.number}`;
-  filterChip.hidden = !filterKey || view === 'stack' || Boolean(zoomed);
+  filterChip.hidden = !filterKey || view === 'stack' || Boolean(zoomed) || Boolean(family);
   if (filterKey) filterName.textContent = groupByKey(filterKey)?.name || '';
 }
 
@@ -276,6 +290,7 @@ function addPanel(wantedNumber) {
   if (view === 'stack') showGrid();
   zoomed = null;
   navStack = [];
+  family = null;
   const panel = { ptyId: null, term: null, fit: null, cwd: null, running: false, sessionId: null, harnessName: null };
   panel.number = freeNumber(wantedNumber);
 
@@ -732,6 +747,7 @@ function groupByKey(key) {
 
 function showPanel(panel) {
   navStack = [];
+  if (family && !family.members.includes(panel)) family = null;
   if (zoomed) zoomed = panel; // in full-window mode, ⌘1 to ⌘9 switch which panel fills the window
   if (filterKey && panel.cwd && groupOf(panel).key !== filterKey) filterKey = null;
   applyLayout();
@@ -766,6 +782,7 @@ function showStack() {
 // ⌘S opens the stack view. From the stack view or a filtered view it goes back to all terminals.
 function toggleStack() {
   navStack = [];
+  family = null;
   if (view === 'stack' || filterKey) {
     filterKey = null;
     showGrid();
@@ -777,6 +794,7 @@ function toggleStack() {
 function openGroup(key, panel) {
   filterKey = key;
   zoomed = null;
+  family = null;
   showGrid();
   if (panel) setFocus(panel);
 }
@@ -941,6 +959,32 @@ function showMention() {
   setFocus(zoomed);
 }
 
+// ⌘⇧↓: show the panel you started from and every session it mentioned, side by side.
+// Pressing it again goes back to all terminals. Inside ⌘↓, it widens to the whole group.
+function enterFamily() {
+  if (view !== 'grid') return;
+  const mother = navStack.length ? navStack[0].mother : focused;
+  if (!mother) return;
+  if (family && family.mother === mother && !navStack.length) return leaveFamily();
+  const children = (mentionMap.get(mother) || []).filter((c) => panels.includes(c));
+  if (!children.length) return flashNote(mother, 'No other terminal mentioned yet');
+  family = { mother, members: [mother, ...children].sort((a, b) => a.number - b.number) };
+  navStack = [];
+  zoomed = null;
+  applyLayout();
+  setFocus(mother);
+}
+
+// ⌘↑ from the group: back to all terminals.
+function leaveFamily() {
+  if (!family) return;
+  const mother = family.mother;
+  family = null;
+  zoomed = null;
+  applyLayout();
+  setFocus(mother);
+}
+
 // ⌘← and ⌘→: move between the mentioned sessions.
 function moveMention(step) {
   const top = navStack[navStack.length - 1];
@@ -976,6 +1020,14 @@ async function refreshMentions() {
         if (child && child !== p && !children.includes(child)) children.push(child);
       }
       mentionMap.set(p, children.sort((a, b) => a.number - b.number));
+    }
+    if (family) {
+      const children = (mentionMap.get(family.mother) || []).filter((c) => panels.includes(c));
+      const members = [family.mother, ...children].sort((a, b) => a.number - b.number);
+      if (members.length !== family.members.length || members.some((m, i) => m !== family.members[i])) {
+        family.members = members;
+        applyLayout();
+      }
     }
     const childIds = [...new Set([...mentionMap.values()].flat().filter((c) => c.running && c.sessionId).map((c) => c.sessionId))];
     const activity = childIds.length ? await api.sessionActivity(childIds) : {};
@@ -1116,7 +1168,7 @@ layoutBtn.addEventListener('click', toggleOddLayout);
 document.getElementById('stack-btn').addEventListener('click', toggleStack);
 filterChip.addEventListener('click', toggleStack);
 zoomChip.addEventListener('click', toggleZoom);
-navChip.addEventListener('click', leaveMentions);
+navChip.addEventListener('click', () => (navStack.length ? leaveMentions() : leaveFamily()));
 
 api.onMenu('new', () => addPanel());
 api.onMenu('search', openSearch);
@@ -1139,17 +1191,21 @@ window.addEventListener('keydown', (e) => {
     } else if (panels.find((p) => p.number === n + 1)) {
       showPanel(panels.find((p) => p.number === n + 1));
     }
-  } else if (e.metaKey && !e.shiftKey && !e.altKey && e.key.startsWith('Arrow')) {
+  } else if (e.metaKey && !e.altKey && e.key.startsWith('Arrow') && (!e.shiftKey || e.key === 'ArrowDown')) {
     const t = e.target;
     const typingInBox = (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA') && !t.classList.contains('xterm-helper-textarea');
     if (typingInBox || view !== 'grid' || searchDialog.open || settingsDialog.open) return;
     if (e.key === 'ArrowDown') {
       e.preventDefault();
-      enterMentions(focused);
+      if (e.shiftKey) enterFamily();
+      else enterMentions(focused);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (navStack.length) leaveMentions();
+      else if (family) leaveFamily();
     } else if (navStack.length) {
       e.preventDefault();
-      if (e.key === 'ArrowUp') leaveMentions();
-      else moveMention(e.key === 'ArrowLeft' ? -1 : 1);
+      moveMention(e.key === 'ArrowLeft' ? -1 : 1);
     }
   } else if (e.key === 'Escape' && view === 'stack' && !searchDialog.open && !settingsDialog.open) {
     toggleStack();

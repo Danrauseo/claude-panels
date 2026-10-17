@@ -39,8 +39,9 @@ For quick testing without installing, run `npm start`.
 | ⌘N | New terminal |
 | ⌘K | Search past Claude sessions and resume one |
 | ⌘↓ | Show the sessions this terminal mentioned with @, one at a time, full window |
+| ⌘⇧↓ | Show this terminal and every session it mentioned side by side, hiding the others. Press it again, or ⌘↑, to show all terminals |
 | ⌘← ⌘→ | Move between those mentioned sessions |
-| ⌘↑ | Go back to the terminal you started from |
+| ⌘↑ | Go back to the terminal you started from, or from the group view to all terminals |
 | ⌘S | Stack view of open harnesses. Press it again to show all terminals |
 | ⌘R | Resume the terminals you had open when the app last closed |
 | ⌘O | Choose a folder for a new terminal |
@@ -91,6 +92,8 @@ The app gives each Claude session these tools through a small tool server named 
 ### Moving between mentioned sessions
 
 When a session mentions other terminals, whether you typed `@2-wrap` or Claude messaged, searched or read another session, those terminals appear as small labels in the session's top bar. Each label has a light: green when that session is working, orange when it is waiting for you, and grey when it has ended.
+
+Press ⌘⇧↓ to see that terminal and all the sessions it mentioned side by side, with every other terminal hidden. ⌘↑ or ⌘⇧↓ again shows all terminals. If you're already looking at one mentioned session, ⌘⇧↓ widens the view to the whole group around the terminal you started from.
 
 Press ⌘↓ in that terminal to show the first mentioned session full window. ⌘← and ⌘→ move between the mentioned sessions, and ⌘↑ goes back to the terminal you started from. The terminal you press ⌘↓ in is always the starting point, so pressing ⌘↓ again inside a mentioned session goes one level further, and ⌘↑ steps back one level at a time. Clicking a label does the same as ⌘↓ and goes straight to that session.
 
