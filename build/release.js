@@ -14,7 +14,8 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 
 const root = path.join(__dirname, '..');
-const run = (cmd, args, opts = {}) => execFileSync(cmd, args, { cwd: root, encoding: 'utf8', ...opts }).trim();
+// Steps that show their own output return nothing, so treat that as an empty string.
+const run = (cmd, args, opts = {}) => (execFileSync(cmd, args, { cwd: root, encoding: 'utf8', ...opts }) || '').trim();
 const fail = (message) => {
   console.error(message);
   process.exit(1);
