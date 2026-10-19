@@ -21,7 +21,7 @@ contextBridge.exposeInMainWorld('panelsApi', {
   isDir: (p) => ipcRenderer.invoke('path:isDir', p),
   makeTitle: (opts) => ipcRenderer.invoke('title:make', opts),
   checkUpdate: () => ipcRenderer.invoke('update:check'),
-  runUpdate: (workspace) => ipcRenderer.invoke('update:run', workspace),
+  runUpdate: (workspace, tag) => ipcRenderer.invoke('update:run', workspace, tag),
   onUpdateAvailable: (fn) => ipcRenderer.on('update:available', (_e, info) => fn(info)),
   onUpdateProgress: (fn) => ipcRenderer.on('update:progress', (_e, text) => fn(text)),
 

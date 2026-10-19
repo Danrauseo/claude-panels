@@ -445,7 +445,12 @@ ipcMain.handle('sessions:activity', (_e, ids) => {
 
 // ---------- Settings, folders and files ----------
 
-ipcMain.handle('settings:get', () => ({ ...settings, defaultPrompts: DEFAULT_PROMPTS, home: os.homedir() }));
+ipcMain.handle('settings:get', () => ({
+  ...settings,
+  defaultPrompts: DEFAULT_PROMPTS,
+  home: os.homedir(),
+  appVersion: app.getVersion(),
+}));
 ipcMain.handle('settings:set', (_e, changes) => {
   settings = { ...settings, ...changes };
   saveSettings();
@@ -534,8 +539,9 @@ ipcMain.handle('title:make', async (_e, { sessionId, text, basedOn }) => {
 
 // ---------- Updates ----------
 
-// The build records the folder it was built from and the commit it was built at. The app checks
-// that folder's git remote for newer commits and can pull, rebuild, reinstall and restart itself.
+// Updates come from GitHub releases. The app compares the latest release on GitHub with its own
+// version. To update, it moves the folder it was built from to that release, then rebuilds,
+// reinstalls and restarts itself. The build records which folder that is.
 const buildInfo = (() => {
   try {
     return require('./package.json');
@@ -553,29 +559,62 @@ function git(args) {
   });
 }
 
+// "owner/repo" from the folder's GitHub remote, so a fork checks its own releases.
+async function githubRepo() {
+  const fromUrl = (url) => (String(url || '').match(/github\.com[:/]([^/]+\/[^/.]+?)(?:\.git)?\/?$/) || [])[1];
+  try {
+    const repo = fromUrl(await git(['remote', 'get-url', 'origin']));
+    if (repo) return repo;
+  } catch {}
+  return fromUrl(buildInfo.repository?.url);
+}
+
+// True when version a is newer than version b, comparing numbers such as 0.2.10 and 0.2.9.
+function isNewer(a, b) {
+  const pa = a.split('.').map((n) => parseInt(n, 10) || 0);
+  const pb = b.split('.').map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) > (pb[i] || 0);
+  }
+  return false;
+}
+
 let updateRunning = false;
 
 async function checkForUpdate() {
   if (!sourceDir || !fs.existsSync(path.join(sourceDir, '.git')) || updateRunning) return null;
   try {
-    await git(['fetch', '--quiet']);
-    const built = buildInfo.builtCommit || (await git(['rev-parse', 'HEAD']));
-    const count = Number(await git(['rev-list', '--count', `${built}..@{u}`]));
-    if (!count) return null;
-    const subjects = (await git(['log', '--format=%s', `${built}..@{u}`])).split('\n').slice(0, 5);
-    return { count, subjects };
+    const repo = await githubRepo();
+    if (!repo) return null;
+    const res = await fetch(`https://api.github.com/repos/${repo}/releases/latest`, {
+      headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'claude-panels' },
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!res.ok) return null; // no releases yet, or GitHub could not be reached
+    const release = await res.json();
+    const tag = String(release.tag_name || '');
+    const version = tag.replace(/^v/, '');
+    if (!/^[\w.-]+$/.test(tag) || !isNewer(version, app.getVersion())) return null;
+    return {
+      tag,
+      version,
+      current: app.getVersion(),
+      name: release.name || tag,
+      notes: String(release.body || '').trim().slice(0, 1500),
+      url: release.html_url,
+    };
   } catch {
-    return null; // offline, no remote, or not a git folder: stay quiet
+    return null; // offline: stay quiet and try again later
   }
 }
 
 ipcMain.handle('update:check', () => checkForUpdate());
 
 // Runs a step in the user's login shell so git, node and npm are found as they are in Terminal.
-function runStep(label, command) {
+function runStep(label, command, extraEnv = {}) {
   send('update:progress', label);
   return new Promise((resolve, reject) => {
-    const child = spawn(userShell, ['-l', '-c', command], { cwd: sourceDir, env: cleanEnv() });
+    const child = spawn(userShell, ['-l', '-c', command], { cwd: sourceDir, env: { ...cleanEnv(), ...extraEnv } });
     let output = '';
     child.stdout.on('data', (d) => (output += d));
     child.stderr.on('data', (d) => (output += d));
@@ -583,11 +622,15 @@ function runStep(label, command) {
   });
 }
 
-ipcMain.handle('update:run', async (_e, workspace) => {
+ipcMain.handle('update:run', async (_e, workspace, tag) => {
   if (updateRunning) return { error: 'An update is already running.' };
+  if (!/^[\w.-]+$/.test(tag || '')) return { error: 'No release was chosen.' };
   updateRunning = true;
   try {
-    await runStep('Downloading the changes…', 'git pull --ff-only');
+    // Move the folder's branch forward to the release. This refuses to throw away local changes.
+    await runStep('Downloading the new version…', 'git fetch --tags --quiet && git merge --ff-only --quiet "refs/tags/$CP_TAG"', {
+      CP_TAG: tag,
+    });
     await runStep('Installing the parts the app needs…', 'npm install');
     await runStep('Building and signing the app. This takes a few minutes…', 'npm run dist');
 
@@ -631,7 +674,21 @@ function send(channel, ...args) {
 
 function buildMenu() {
   const template = [
-    { role: 'appMenu' },
+    {
+      role: 'appMenu',
+      submenu: [
+        { role: 'about' },
+        { label: 'Check for Updates…', click: () => send('menu:check-update') },
+        { type: 'separator' },
+        { role: 'services' },
+        { type: 'separator' },
+        { role: 'hide' },
+        { role: 'hideOthers' },
+        { role: 'unhide' },
+        { type: 'separator' },
+        { role: 'quit' },
+      ],
+    },
     {
       label: 'Terminal',
       submenu: [

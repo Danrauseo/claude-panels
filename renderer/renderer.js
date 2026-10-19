@@ -785,25 +785,39 @@ function showUpdate(info) {
   updateInfo = info;
   updateBtn.hidden = false;
   updateBtn.disabled = false;
-  updateBtn.textContent = 'Update available';
-  updateBtn.title = `${info.count} new change${info.count === 1 ? '' : 's'}:\n` + info.subjects.map((x) => `• ${x}`).join('\n');
+  updateBtn.textContent = `Update to v${info.version}`;
+  updateBtn.title = `${info.name}${info.notes ? '\n\n' + info.notes : ''}`;
 }
 
 async function runUpdate() {
   if (!updateInfo || updateBtn.disabled) return;
-  const list = updateInfo.subjects.map((x) => `• ${x}`).join('\n');
+  const notes = updateInfo.notes ? `\n\n${updateInfo.notes.split('\n').slice(0, 14).join('\n')}` : '';
   const ok = confirm(
-    `Update Claude Panels?\n\n${updateInfo.count} new change${updateInfo.count === 1 ? '' : 's'}:\n${list}\n\n` +
-      'The app downloads the changes, rebuilds itself and restarts. This takes a few minutes. ' +
+    `Update Claude Panels from v${updateInfo.current} to v${updateInfo.version}?${notes}\n\n` +
+      'The app downloads the new version, rebuilds itself and restarts. This takes a few minutes. ' +
       'Your terminals come back by themselves afterwards.'
   );
   if (!ok) return;
   updateBtn.disabled = true;
   saveWorkspace();
-  const result = await api.runUpdate(currentWorkspace());
+  const result = await api.runUpdate(currentWorkspace(), updateInfo.tag);
   if (result?.error) {
     alert(`The update did not finish.\n\n${result.error}`);
     showUpdate(updateInfo);
+  }
+}
+
+// Claude Panels menu > Check for Updates…
+async function checkUpdateNow() {
+  const info = await api.checkUpdate();
+  if (info) {
+    showUpdate(info);
+    runUpdate();
+  } else {
+    alert(
+      `No newer release of Claude Panels was found. You have v${settings.appVersion}.\n\n` +
+        'If you are offline, the app checks again when you next open it and every six hours.'
+    );
   }
 }
 
@@ -1298,6 +1312,7 @@ api.onMenu('new', () => addPanel());
 api.onMenu('search', openSearch);
 api.onMenu('browse', browseShortcut);
 api.onMenu('upload', addFilesToTerminal);
+api.onMenu('check-update', checkUpdateNow);
 api.onMenu('close', () => view === 'grid' && closePanel(focused));
 api.onMenu('layout', toggleOddLayout);
 api.onMenu('zoom', toggleZoom);

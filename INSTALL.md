@@ -104,7 +104,7 @@ Tell the user:
 
 ### Updating later
 
-The app checks for updates by itself and shows an **Update available** button in its top bar. Clicking it downloads, rebuilds, reinstalls and restarts the app, and brings the terminals back.
+New versions are published as GitHub releases. The app checks for them by itself and shows an **Update to v…** button in its top bar when one is out. Clicking it shows the release notes, then downloads, rebuilds, reinstalls and restarts the app, and brings the terminals back.
 
 To update by hand instead, quit Claude Panels first, then run:
 

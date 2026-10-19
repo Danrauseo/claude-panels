@@ -24,15 +24,29 @@ The app is not notarized by Apple, so a copy built on one Mac and sent to anothe
 
 ### Updating
 
-The app checks for new versions on GitHub when it starts and every six hours. When there is one, an **Update available** button appears in the top bar. Click it to see what changed. The app then downloads the changes, rebuilds and signs itself, and restarts with your terminals back where they were. This takes a few minutes.
+New versions are published as [GitHub releases](https://github.com/Danrauseo/claude-panels/releases). The app checks for a newer release when it starts and every six hours, and you can check yourself with **Claude Panels > Check for Updates**. When there is one, an **Update to v…** button appears in the top bar. Click it to see the release notes. The app then downloads that version, rebuilds and signs itself, and restarts with your terminals back where they were. This takes a few minutes.
 
-Copies installed before this feature need one manual update to get it. Quit the app, then run this in the folder you downloaded it to:
+The app updates from the folder you downloaded it to, so keep that folder. If you have changed files in it, the update stops rather than overwrite your changes.
+
+Copies installed before release updates were added need one manual update. Quit the app, then run this in the folder you downloaded it to:
 
 ```bash
 git pull && npm install && npm run install-app
 ```
 
 For quick testing without installing, run `npm start`.
+
+### Publishing a new version
+
+Commit and push your changes, then run one of these. Each one bumps the version, tags it, pushes it and publishes a GitHub release with the changes since the last release as its notes. It needs the GitHub CLI (`gh`) signed in.
+
+```bash
+npm run release            # 0.1.0 -> 0.1.1, for fixes
+npm run release -- minor   # 0.1.4 -> 0.2.0, for new features
+npm run release -- major   # 0.9.0 -> 1.0.0
+```
+
+Add `--notes notes.md` to use your own release notes.
 
 ## Shortcuts
 

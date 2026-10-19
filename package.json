@@ -9,7 +9,8 @@
     "postinstall": "electron-rebuild -f -w node-pty",
     "create-cert": "bash build/create-signing-cert.sh",
     "dist": "node build/build-app.js",
-    "install-app": "npm run dist && node build/install-app.js"
+    "install-app": "npm run dist && node build/install-app.js",
+    "release": "node build/release.js"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",
