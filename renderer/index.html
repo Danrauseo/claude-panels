@@ -17,6 +17,7 @@
     </button>
     <button id="nav-chip" class="chip" title="Back to the panel you came from (⌘↑)" hidden></button>
     <div class="toolbar-buttons">
+      <button id="update-btn" class="btn update" hidden>Update available</button>
       <button id="new-btn" class="btn" title="New terminal">New <kbd>⌘N</kbd></button>
       <button id="search-btn" class="btn" title="Find a past session">Sessions <kbd>⌘K</kbd></button>
       <button id="stack-btn" class="btn" title="Stack view">Stack <kbd>⌘S</kbd></button>
@@ -41,7 +42,7 @@
     <div class="shortcuts">
       <kbd id="restore-key" hidden>⌘R</kbd><span id="restore-text" hidden></span>
       <kbd>⌘N</kbd><span>New terminal</span>
-      <kbd>⌘K</kbd><span>Find a past session</span>
+      <kbd>⌘K</kbd><span>Find an open terminal or a past session</span>
       <kbd>/</kbd><span>Pick a harness in a new terminal</span>
       <kbd>⌘S</kbd><span>Stack view of open harnesses</span>
       <kbd>⌘U</kbd><span>Add files to the selected terminal</span>
@@ -52,7 +53,7 @@
   </section>
 
   <dialog id="search-dialog" class="palette">
-    <input id="search-input" type="text" placeholder="Search past Claude sessions" spellcheck="false" autocomplete="off" />
+    <input id="search-input" type="text" placeholder="Search open terminals and past sessions" spellcheck="false" autocomplete="off" />
     <div id="search-list" class="list"></div>
     <div class="hints"><kbd>↑</kbd><kbd>↓</kbd> choose <kbd>↵</kbd> resume <kbd>esc</kbd> close</div>
   </dialog>
@@ -90,6 +91,11 @@
         <small>You can add options here, for example <code>claude --model opus</code>.</small>
       </div>
 
+      <div class="field">
+        <label class="radio"><input type="checkbox" id="auto-titles" /> Name terminals automatically</label>
+        <small>Shows what each terminal is about in its top bar. The app asks Claude's smallest model, Haiku, for a short title, which costs a tiny amount per session. A name you set with <code>/rename</code> is always used instead.</small>
+      </div>
+
       <div class="field inline">
         <label for="font-size">Text size</label>
         <input id="font-size" type="number" min="9" max="24" />
@@ -108,10 +114,11 @@
           <kbd>⌘⇧↓</kbd><span>Show this terminal and every session it mentioned, side by side</span>
           <kbd>⌘← ⌘→</kbd><span>Move between those mentioned sessions</span>
           <kbd>⌘↑</kbd><span>Go back: to the terminal you started from, or to all terminals</span>
-          <kbd>⌘K</kbd><span>Search past Claude sessions and resume one</span>
+          <kbd>⌘K</kbd><span>Find an open terminal or a past session</span>
           <kbd>⌘S</kbd><span>Stack view of open harnesses, or back to all terminals</span>
           <kbd>⌘R</kbd><span>Bring back the terminals open when the app last closed</span>
           <kbd>⌘U</kbd><span>Add file paths to the selected terminal</span>
+          <kbd>Drag in</kbd><span>Drop files on a terminal to add their paths, or a folder on a new terminal to start there</span>
           <kbd>⌘O</kbd><span>Choose a folder to start Claude in</span>
           <kbd>⌘L</kbd><span>With an odd number of terminals, move the last one to the bottom or side</span>
           <kbd>⌘,</kbd><span>Settings</span>

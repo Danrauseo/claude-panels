@@ -4,6 +4,7 @@ const fs = require('fs');
 const os = require('os');
 const pty = require('node-pty');
 const crypto = require('crypto');
+const { execFile, spawn } = require('child_process');
 const { describeTool, resultText } = require('./lib/transcript');
 
 // A separate settings folder can be set for testing, so a test copy never touches the installed app's settings.
@@ -33,6 +34,8 @@ const DEFAULT_SETTINGS = {
   workspace: [], // the open panels, saved so they can be restored with ⌘R
   harnesses: [], // [{ name, path }] started with /name
   recentLocations: [], // [path]
+  autoTitles: true, // ask Haiku for a short title for each open session
+  titles: {}, // sessionId -> { title, basedOn, at }
 };
 
 const settingsFile = () => path.join(app.getPath('userData'), 'settings.json');
@@ -109,7 +112,8 @@ function startTerminal({ cwd, cols, rows, resumeId, name, number }) {
   const sessionId = resumeId || crypto.randomUUID();
   if (!fs.existsSync(cwd)) throw new Error(`Folder not found: ${cwd}`);
 
-  if (!/^[\w-]+$/.test(name || '')) throw new Error('Not a valid session name');
+  // The name goes in through an environment variable, so a name chosen with /rename can contain spaces.
+  if (!/^[^\n\r"]{1,80}$/.test(name || '')) throw new Error('Not a valid session name');
   const filePrompt = settings.fileMode === 'off' ? '' : settings.prompts[settings.fileMode] || '';
   const prompt = [panelsPrompt(number, name), filePrompt].filter(Boolean).join('\n\n');
 
@@ -273,6 +277,8 @@ function listSessions() {
         id,
         cwd: info.cwd,
         title: title.replace(/\s+/g, ' ').trim(),
+        customTitle: info.customTitle || null,
+        aiTitle: info.aiTitle || null,
         firstPrompt: info.firstPrompt || '',
         lastPrompt: info.lastPrompt || '',
         updated: stat.mtimeMs,
@@ -365,6 +371,7 @@ const mentionCache = new Map(); // file -> { offset, rest, refs: Map<key, { numb
 
 function addRef(refs, number, name) {
   const key = name || String(number);
+  if (!key || key === 'null') return;
   if (!refs.has(key)) refs.set(key, { number, name: name || null });
 }
 
@@ -375,13 +382,18 @@ function scanMentions(entry, refs) {
     for (const text of texts) {
       if (!text || text.trimStart().startsWith('<')) continue;
       for (const m of text.matchAll(/(?:^|[\s(])@"?(\d+)(-[\w-]+)?/g)) addRef(refs, Number(m[1]), m[2] ? m[1] + m[2] : null);
+      // A session renamed with spaces is mentioned in quotes, for example @"linear tickets".
+      for (const m of text.matchAll(/(?:^|[\s(])@"([^"\n]+)"/g)) if (!/^\d/.test(m[1])) addRef(refs, null, m[1]);
     }
   } else if (entry.type === 'assistant' && Array.isArray(content)) {
     for (const c of content) {
       if (c.type !== 'tool_use') continue;
       const target = c.name === 'SendMessage' ? c.input?.to : /^mcp__panels__(search|read)_session$/.test(c.name) ? c.input?.session : null;
-      const m = String(target || '').trim().replace(/^@/, '').match(/^(\d+)(-[\w-]+)?/);
+      // SendMessage targets look like "15-template-cli [45bf02]". Drop the short id at the end.
+      const clean = String(target || '').trim().replace(/^@/, '').replace(/\s*\[[0-9a-f]+\]$/, '');
+      const m = clean.match(/^(\d+)(-[\w-]+)?$/);
       if (m) addRef(refs, Number(m[1]), m[2] ? m[1] + m[2] : null);
+      else if (clean && c.name === 'SendMessage' && !/^[0-9a-f]{12,}$/.test(clean)) addRef(refs, null, clean);
     }
   }
 }
@@ -465,6 +477,13 @@ ipcMain.handle('folder:choose', async () => {
 });
 
 ipcMain.handle('folder:exists', (_e, dir) => fs.existsSync(dir));
+ipcMain.handle('path:isDir', (_e, p) => {
+  try {
+    return fs.statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+});
 
 ipcMain.handle('file:open', async (_e, target) => {
   if (/^https?:\/\//i.test(target)) return shell.openExternal(target);
@@ -475,10 +494,139 @@ ipcMain.handle('file:open', async (_e, target) => {
   return shell.openPath(filePath);
 });
 
+// ---------- Short titles for sessions ----------
+
+// Claude Code does not write its own title for a session that has a name, and the app names each
+// session after its panel so @2 works. So the app asks Haiku for a short title instead.
+let titleBusy = false;
+
+ipcMain.handle('title:make', async (_e, { sessionId, text, basedOn }) => {
+  if (titleBusy || !settings.autoTitles) return null;
+  titleBusy = true;
+  try {
+    const command =
+      `${(settings.claudeCommand || 'claude').split(' ')[0]} -p --model haiku --no-session-persistence ` +
+      `--tools "" --setting-sources "" --system-prompt "$CP_SYSTEM" "$CP_TEXT"`;
+    const title = await new Promise((resolve) => {
+      execFile(
+        userShell,
+        ['-l', '-i', '-c', command],
+        {
+          cwd: os.tmpdir(),
+          timeout: 60000,
+          env: {
+            ...cleanEnv(),
+            CP_SYSTEM: 'You write short titles. Reply with the title only: 3 to 6 words, no quotes, no full stop.',
+            CP_TEXT: `Write a title for a work session with these requests from the user:\n\n${text.slice(0, 2000)}`,
+          },
+        },
+        (err, stdout) => resolve(err ? null : stdout.trim().split('\n').pop().replace(/^["']|["'.]$/g, '').slice(0, 80))
+      );
+    });
+    if (!title) return null;
+    settings.titles = { ...(settings.titles || {}), [sessionId]: { title, basedOn, at: Date.now() } };
+    saveSettings();
+    return title;
+  } finally {
+    titleBusy = false;
+  }
+});
+
+// ---------- Updates ----------
+
+// The build records the folder it was built from and the commit it was built at. The app checks
+// that folder's git remote for newer commits and can pull, rebuild, reinstall and restart itself.
+const buildInfo = (() => {
+  try {
+    return require('./package.json');
+  } catch {
+    return {};
+  }
+})();
+const sourceDir = buildInfo.sourceDir || (app.isPackaged ? null : __dirname);
+
+function git(args) {
+  return new Promise((resolve, reject) => {
+    execFile('git', ['-C', sourceDir, ...args], { timeout: 60000 }, (err, stdout, stderr) =>
+      err ? reject(new Error((stderr || err.message).trim())) : resolve(stdout.trim())
+    );
+  });
+}
+
+let updateRunning = false;
+
+async function checkForUpdate() {
+  if (!sourceDir || !fs.existsSync(path.join(sourceDir, '.git')) || updateRunning) return null;
+  try {
+    await git(['fetch', '--quiet']);
+    const built = buildInfo.builtCommit || (await git(['rev-parse', 'HEAD']));
+    const count = Number(await git(['rev-list', '--count', `${built}..@{u}`]));
+    if (!count) return null;
+    const subjects = (await git(['log', '--format=%s', `${built}..@{u}`])).split('\n').slice(0, 5);
+    return { count, subjects };
+  } catch {
+    return null; // offline, no remote, or not a git folder: stay quiet
+  }
+}
+
+ipcMain.handle('update:check', () => checkForUpdate());
+
+// Runs a step in the user's login shell so git, node and npm are found as they are in Terminal.
+function runStep(label, command) {
+  send('update:progress', label);
+  return new Promise((resolve, reject) => {
+    const child = spawn(userShell, ['-l', '-c', command], { cwd: sourceDir, env: cleanEnv() });
+    let output = '';
+    child.stdout.on('data', (d) => (output += d));
+    child.stderr.on('data', (d) => (output += d));
+    child.on('close', (code) => (code === 0 ? resolve() : reject(new Error(`${label} failed:\n${output.slice(-1500)}`))));
+  });
+}
+
+ipcMain.handle('update:run', async (_e, workspace) => {
+  if (updateRunning) return { error: 'An update is already running.' };
+  updateRunning = true;
+  try {
+    await runStep('Downloading the changes…', 'git pull --ff-only');
+    await runStep('Installing the parts the app needs…', 'npm install');
+    await runStep('Building and signing the app. This takes a few minutes…', 'npm run dist');
+
+    if (!app.isPackaged) {
+      send('update:progress', 'Built. A test copy does not reinstall itself.');
+      return { done: true };
+    }
+
+    // Replace this app with the new build, then restart it and bring the terminals back.
+    send('update:progress', 'Installing the new version…');
+    const bundle = path.resolve(path.dirname(app.getPath('exe')), '..', '..');
+    const builtApp = ['mac-arm64', 'mac']
+      .map((dir) => path.join(sourceDir, 'dist', dir, 'Claude Panels.app'))
+      .filter((p) => fs.existsSync(p))
+      .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs)[0];
+    if (!builtApp) throw new Error('The build finished but the new app could not be found.');
+    await new Promise((resolve, reject) =>
+      execFile('ditto', [builtApp, bundle + '.new'], (err) => (err ? reject(err) : resolve()))
+    );
+    fs.rmSync(bundle, { recursive: true, force: true });
+    fs.renameSync(bundle + '.new', bundle);
+
+    settings = { ...settings, workspace: workspace || settings.workspace, restoreOnLaunch: true };
+    saveSettings();
+    for (const proc of terminals.values()) proc.kill();
+    app.relaunch();
+    app.exit(0);
+    return { done: true };
+  } catch (err) {
+    return { error: err.message };
+  } finally {
+    updateRunning = false;
+  }
+});
+
 // ---------- Window and menu ----------
 
-function send(channel) {
-  if (win && !win.isDestroyed()) win.webContents.send(channel);
+function send(channel, ...args) {
+  if (win && !win.isDestroyed()) win.webContents.send(channel, ...args);
 }
 
 function buildMenu() {
@@ -565,6 +713,13 @@ app.whenReady().then(() => {
   writeRegistry([]); // nothing is open yet
   buildMenu();
   createWindow();
+  // Look for updates shortly after starting, then every six hours.
+  const announce = async () => {
+    const update = await checkForUpdate();
+    if (update) send('update:available', update);
+  };
+  setTimeout(announce, 15000);
+  setInterval(announce, 6 * 60 * 60 * 1000);
   app.on('activate', () => {
     if (!win) createWindow();
   });

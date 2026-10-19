@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('panelsApi', {
   startTerminal: (opts) => ipcRenderer.invoke('pty:start', opts),
@@ -17,6 +17,13 @@ contextBridge.exposeInMainWorld('panelsApi', {
   sessionActivity: (ids) => ipcRenderer.invoke('sessions:activity', ids),
   sessionMentions: (ids) => ipcRenderer.invoke('sessions:mentions', ids),
   pickFiles: (fallbackDir) => ipcRenderer.invoke('file:pick', fallbackDir),
+  pathForFile: (file) => webUtils.getPathForFile(file),
+  isDir: (p) => ipcRenderer.invoke('path:isDir', p),
+  makeTitle: (opts) => ipcRenderer.invoke('title:make', opts),
+  checkUpdate: () => ipcRenderer.invoke('update:check'),
+  runUpdate: (workspace) => ipcRenderer.invoke('update:run', workspace),
+  onUpdateAvailable: (fn) => ipcRenderer.on('update:available', (_e, info) => fn(info)),
+  onUpdateProgress: (fn) => ipcRenderer.on('update:progress', (_e, text) => fn(text)),
 
   onMenu: (name, fn) => ipcRenderer.on(`menu:${name}`, fn),
 });

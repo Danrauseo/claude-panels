@@ -44,9 +44,26 @@ console.log(
 );
 console.log(`Building for ${arch === 'arm64' ? 'Apple Silicon' : 'Intel'} Macs.`);
 
-const args = ['electron-builder', '--mac', 'dir', `--${arch}`, `-c.mac.identity=${identity}`];
+// Record where this copy was built from, so the app can check that folder for updates.
+const root = path.join(__dirname, '..');
+let commit = '';
+try {
+  commit = execFileSync('git', ['-C', root, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+} catch {
+  // not a git folder, so the app will not offer updates
+}
+
+const args = [
+  'electron-builder',
+  '--mac',
+  'dir',
+  `--${arch}`,
+  `-c.mac.identity=${identity}`,
+  `-c.extraMetadata.sourceDir=${root}`,
+  `-c.extraMetadata.builtCommit=${commit}`,
+];
 // An ad-hoc signature cannot carry a timestamp from Apple's server.
 if (identity === '-') args.push('-c.mac.timestamp=none');
 
-const result = spawnSync('npx', args, { stdio: 'inherit', cwd: path.join(__dirname, '..') });
+const result = spawnSync('npx', args, { stdio: 'inherit', cwd: root });
 process.exit(result.status ?? 1);

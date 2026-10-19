@@ -298,6 +298,7 @@ function addPanel(wantedNumber) {
   panel.head = el('div', 'panel-head');
   panel.head.append(
     el('span', 'num'),
+    el('span', 'own-light'),
     el('span', 'title', 'New terminal'),
     el('span', 'path'),
     el('span', 'mentions'),
@@ -314,6 +315,20 @@ function addPanel(wantedNumber) {
   panel.el.append(panel.head, panel.body);
   panel.el.addEventListener('mousedown', () => {
     if (focused !== panel) setFocus(panel);
+  });
+  // Dropping files adds their paths to this terminal. Dropping a folder on a new terminal starts Claude there.
+  panel.el.addEventListener('dragover', (e) => {
+    if (!e.dataTransfer.types.includes('Files')) return;
+    e.preventDefault();
+    panel.el.classList.add('drop-target');
+  });
+  panel.el.addEventListener('dragleave', (e) => {
+    if (!panel.el.contains(e.relatedTarget)) panel.el.classList.remove('drop-target');
+  });
+  panel.el.addEventListener('drop', (e) => {
+    e.preventDefault();
+    panel.el.classList.remove('drop-target');
+    dropFiles(panel, [...e.dataTransfer.files].map((f) => api.pathForFile(f)).filter(Boolean));
   });
 
   // Keep panels in number order on screen.
@@ -486,18 +501,43 @@ let sessions = null;
 function buildSearchEntries(query) {
   if (!sessions) return [{ note: 'Loading sessions…' }];
   const words = query.toLowerCase().split(/\s+/).filter(Boolean);
-  const matches = sessions.filter((s) => {
-    const haystack = `${s.title} ${s.firstPrompt} ${s.lastPrompt} ${s.cwd}`.toLowerCase();
-    return words.every((w) => haystack.includes(w));
-  });
-  if (!matches.length) return [{ note: 'No sessions match.' }];
-  return matches.slice(0, 150).map((s) => ({
-    label: s.title,
+  const matchesAll = (text) => words.every((w) => text.toLowerCase().includes(w));
+
+  // Open terminals come first. Choosing one takes you to it.
+  const openPanels = panels.filter(
+    (p) => p.cwd && matchesAll(`${p.number} ${p.name || ''} ${p.about || ''} ${p.title || ''} ${p.harnessName || ''} ${p.cwd}`)
+  );
+  const openIds = new Set(panels.map((p) => p.sessionId).filter(Boolean));
+  const entries = [];
+  if (openPanels.length) {
+    entries.push({ group: 'Open terminals' });
+    for (const p of openPanels) {
+      entries.push({
+        label: `${p.number} · ${p.about || p.title}`,
+        when: p.running ? 'open' : 'ended',
+        detail: `${groupOf(p).name} · ${tildePath(p.cwd)}`,
+        title: p.cwd,
+        run: () => {
+          searchDialog.close();
+          if (view === 'stack') showGrid();
+          showPanel(p);
+        },
+      });
+    }
+  }
+
+  const matches = sessions.filter(
+    (s) => !openIds.has(s.id) && matchesAll(`${displayTitle(s)} ${s.title} ${s.firstPrompt} ${s.lastPrompt} ${s.cwd}`)
+  );
+  if (matches.length) entries.push({ group: 'Past sessions' });
+  if (!entries.length) return [{ note: 'No terminals or sessions match.' }];
+  return entries.concat(matches.slice(0, 150).map((s) => ({
+    label: displayTitle(s),
     when: timeAgo(s.updated),
     detail: tildePath(s.cwd) + (s.folderExists ? '' : '  (folder no longer exists)'),
     title: `${s.cwd}\nSession ${s.id}`,
     run: () => resumeSession(s),
-  }));
+  })));
 }
 
 const searchList = new KeyList(searchInput, document.getElementById('search-list'), buildSearchEntries);
@@ -527,7 +567,7 @@ function resumeSession(session) {
   const open = panels.find((p) => p.sessionId === session.id && p.running);
   if (open) return showPanel(open);
   const panel = isUnstarted(focused) ? focused : addPanel();
-  launch(panel, session.cwd, { resumeId: session.id, title: session.title });
+  launch(panel, session.cwd, { resumeId: session.id, title: session.title, name: session.customTitle });
 }
 
 // ---------- Terminal ----------
@@ -590,7 +630,7 @@ function registerFileLinks(term) {
   });
 }
 
-async function launch(panel, dir, { resumeId = null, title = null, harnessName = null } = {}) {
+async function launch(panel, dir, { resumeId = null, title = null, harnessName = null, name = null } = {}) {
   if (panel.launching || panel.ptyId !== null) return;
   if (!(await api.folderExists(dir))) {
     panel.picker?.keyList.showMessage(`That folder does not exist: ${dir}`);
@@ -642,7 +682,8 @@ async function launch(panel, dir, { resumeId = null, title = null, harnessName =
   panel.fit = fit;
 
   try {
-    panel.name = sessionName(panel);
+    // Keep a name the user chose with /rename. Otherwise name the session after its panel.
+    panel.name = name && !/^\d+-[\w-]+$/.test(name) ? name : sessionName(panel);
     const started = await api.startTerminal({
       cwd: dir,
       cols: term.cols,
@@ -714,6 +755,64 @@ async function addFilesToTerminal() {
   if (files.length) panel.term.paste(files.map(quotePath).join(' ') + ' ');
   panel.term.focus();
 }
+
+// ---------- Dropping files (drag and drop) ----------
+
+async function dropFiles(panel, paths) {
+  if (!paths.length) return;
+  setFocus(panel);
+  if (isUnstarted(panel)) {
+    if (paths.length === 1 && (await api.isDir(paths[0]))) return launch(panel, paths[0]);
+    panel.picker?.keyList.showMessage('Drop a folder here to start Claude in it.');
+    return;
+  }
+  if (panel.term && panel.running) {
+    panel.term.paste(paths.map(quotePath).join(' ') + ' ');
+    panel.term.focus();
+  }
+}
+
+// Without this, dropping a file outside a panel would open it in the app window.
+window.addEventListener('dragover', (e) => e.preventDefault());
+window.addEventListener('drop', (e) => e.preventDefault());
+
+// ---------- Updates ----------
+
+const updateBtn = document.getElementById('update-btn');
+let updateInfo = null;
+
+function showUpdate(info) {
+  updateInfo = info;
+  updateBtn.hidden = false;
+  updateBtn.disabled = false;
+  updateBtn.textContent = 'Update available';
+  updateBtn.title = `${info.count} new change${info.count === 1 ? '' : 's'}:\n` + info.subjects.map((x) => `• ${x}`).join('\n');
+}
+
+async function runUpdate() {
+  if (!updateInfo || updateBtn.disabled) return;
+  const list = updateInfo.subjects.map((x) => `• ${x}`).join('\n');
+  const ok = confirm(
+    `Update Claude Panels?\n\n${updateInfo.count} new change${updateInfo.count === 1 ? '' : 's'}:\n${list}\n\n` +
+      'The app downloads the changes, rebuilds itself and restarts. This takes a few minutes. ' +
+      'Your terminals come back by themselves afterwards.'
+  );
+  if (!ok) return;
+  updateBtn.disabled = true;
+  saveWorkspace();
+  const result = await api.runUpdate(currentWorkspace());
+  if (result?.error) {
+    alert(`The update did not finish.\n\n${result.error}`);
+    showUpdate(updateInfo);
+  }
+}
+
+api.onUpdateAvailable(showUpdate);
+api.onUpdateProgress((text) => {
+  updateBtn.hidden = false;
+  updateBtn.textContent = text;
+});
+updateBtn.addEventListener('click', runUpdate);
 
 // ---------- Harness groups ----------
 
@@ -873,13 +972,13 @@ function drawStack(activity) {
       else if (act.working) text = 'Thinking…';
       if (act.background?.length) text += `  ·  in the background: ${act.background.join(', ')}`;
       lines.push(
-        sessionLine(s?.title || p.title || 'New session', s ? timeAgo(s.updated) : 'now', true, text,
+        sessionLine((s && displayTitle(s)) || p.title || 'New session', s ? timeAgo(s.updated) : 'now', true, text,
           Boolean(act.pending || act.working || act.background?.length), () => openGroup(group.key, p))
       );
     }
     const runningIds = new Set(group.panels.map((p) => p.sessionId));
     for (const s of inGroup.filter((x) => !runningIds.has(x.id)).slice(0, Math.max(0, 3 - lines.length))) {
-      lines.push(sessionLine(s.title, timeAgo(s.updated), false, '', false, () => resumeSession(s)));
+      lines.push(sessionLine(displayTitle(s), timeAgo(s.updated), false, '', false, () => resumeSession(s)));
     }
     if (!lines.length) card.append(el('div', 'none', 'No saved sessions yet.'));
     card.append(...lines);
@@ -890,7 +989,11 @@ function drawStack(activity) {
 // ---------- Saving and restoring open terminals (⌘R) ----------
 
 function saveWorkspace() {
-  const workspace = panels
+  saveSettings({ workspace: currentWorkspace() });
+}
+
+function currentWorkspace() {
+  return panels
     .filter((p) => p.cwd && p.ptyId !== null)
     .map((p) => ({
       number: p.number,
@@ -900,7 +1003,6 @@ function saveWorkspace() {
       title: p.title,
       harnessName: p.harnessName,
     }));
-  saveSettings({ workspace });
 }
 
 function updateRestoreHint() {
@@ -923,7 +1025,7 @@ async function restoreWorkspace() {
     const panel = isUnstarted(focused) && focused.number === item.number ? focused : addPanel(item.number);
     // A session that never got a message has no saved file, so start a fresh one in that folder instead.
     const resumeId = item.sessionId && known.has(item.sessionId) ? item.sessionId : null;
-    await launch(panel, item.cwd, { resumeId, title: item.title, harnessName: item.harnessName });
+    await launch(panel, item.cwd, { resumeId, title: item.title, harnessName: item.harnessName, name: resumeId ? item.name : null });
   }
 }
 
@@ -931,7 +1033,11 @@ async function restoreWorkspace() {
 
 // The open panel a mention points at: an exact session name such as "2-wrap" first, then the number.
 function panelForRef(ref) {
-  return (ref.name && panels.find((p) => p.name === ref.name)) || panels.find((p) => p.number === ref.number && p.cwd);
+  return (
+    (ref.name && panels.find((p) => p.name === ref.name)) ||
+    (ref.number != null && panels.find((p) => p.number === ref.number && p.cwd)) ||
+    null
+  );
 }
 
 function flashNote(panel, text) {
@@ -1029,12 +1135,23 @@ async function refreshMentions() {
         applyLayout();
       }
     }
-    const childIds = [...new Set([...mentionMap.values()].flat().filter((c) => c.running && c.sessionId).map((c) => c.sessionId))];
-    const activity = childIds.length ? await api.sessionActivity(childIds) : {};
-    for (const p of panels) drawMentions(p, mentionMap.get(p) || [], activity);
+    const ids = started.filter((p) => p.running).map((p) => p.sessionId);
+    const activity = ids.length ? await api.sessionActivity(ids) : {};
+    for (const p of panels) {
+      drawMentions(p, mentionMap.get(p) || [], activity);
+      drawOwnLight(p, activity[p.sessionId] || {});
+    }
   } finally {
     mentionsRefreshing = false;
   }
+}
+
+// Each panel's own light: green while Claude is working, orange when it is waiting for you.
+function drawOwnLight(panel, act) {
+  const light = panel.head.querySelector('.own-light');
+  const state = !panel.cwd ? '' : !panel.running ? 'off' : act.pending || act.working ? 'working' : 'idle';
+  light.className = `own-light ${state}`;
+  light.title = { working: 'Claude is working', idle: 'Claude is waiting for you', off: 'This session has ended', '': '' }[state];
 }
 
 function drawMentions(panel, children, activity) {
@@ -1113,6 +1230,7 @@ function openSettings() {
   showPromptFor(settings.fileMode);
   document.getElementById('claude-command').value = settings.claudeCommand;
   document.getElementById('font-size').value = settings.fontSize;
+  document.getElementById('auto-titles').checked = settings.autoTitles !== false;
   renderHarnessList();
   settingsDialog.showModal();
 }
@@ -1145,6 +1263,7 @@ settingsDialog.addEventListener('close', async () => {
     prompts: draftPrompts,
     claudeCommand: document.getElementById('claude-command').value.trim() || 'claude',
     fontSize,
+    autoTitles: document.getElementById('auto-titles').checked,
   });
   for (const p of panels) {
     if (p.term) {
@@ -1218,11 +1337,69 @@ setInterval(async () => {
   if (!panels.some((p) => p.running)) return;
   sessions = await api.listSessions();
   followNewSessions();
-}, 20000);
+  updateTitles();
+}, 5000);
+
+// What a session is about: a name you chose with /rename, Claude's own title, the app's Haiku title,
+// or else the start of your first message.
+function displayTitle(s) {
+  if (!s) return '';
+  if (s.customTitle && !/^\d+-[\w-]+$/.test(s.customTitle)) return s.customTitle;
+  if (s.aiTitle) return s.aiTitle;
+  const made = settings.titles?.[s.id]?.title;
+  if (made) return made;
+  const words = (s.firstPrompt || s.lastPrompt || s.title || '').split(/\s+/);
+  return words.slice(0, 8).join(' ') + (words.length > 8 ? '…' : '');
+}
+
+// Ask Haiku for a title once the first message is in, and again at most every 15 minutes while
+// new requests keep coming. Only for open terminals.
+function maybeMakeTitle(s) {
+  if (!settings.autoTitles || !s || s.aiTitle) return;
+  if (s.customTitle && !/^\d+-[\w-]+$/.test(s.customTitle)) return;
+  const basedOn = s.lastPrompt || s.firstPrompt;
+  if (!basedOn) return;
+  const made = settings.titles?.[s.id];
+  if (made && (made.basedOn === basedOn || Date.now() - made.at < 15 * 60000)) return;
+  const text = [s.firstPrompt, s.lastPrompt].filter((x, i, a) => x && a.indexOf(x) === i).join('\n\n');
+  api.makeTitle({ sessionId: s.id, text, basedOn }).then((title) => {
+    if (!title) return;
+    settings.titles = { ...(settings.titles || {}), [s.id]: { title, basedOn, at: Date.now() } };
+    updateTitles();
+  });
+}
+
+// Each panel's top bar shows what its session is about, from Claude's own title for the session,
+// or the name you gave it with /rename. A /rename name also becomes the name other sessions use.
+function updateTitles() {
+  let renamed = false;
+  for (const p of panels) {
+    const s = p.sessionId && sessions?.find((x) => x.id === p.sessionId);
+    if (!s) continue;
+    if (s.customTitle && !/^\d+-[\w-]+$/.test(s.customTitle) && s.customTitle !== p.name) {
+      p.name = s.customTitle;
+      renamed = true;
+    }
+    p.about = displayTitle(s);
+    maybeMakeTitle(s);
+    const label = p.harnessName || baseName(p.cwd);
+    const text = p.about && p.about !== label ? `${label} · ${p.about}` : label;
+    const title = p.head.querySelector('.title');
+    if (title.textContent !== text) {
+      title.textContent = text;
+      title.title = text;
+    }
+  }
+  if (renamed) saveWorkspace();
+}
 
 (async () => {
   settings = await api.getSettings();
   restorable = settings.workspace || [];
   updateRestoreHint();
   applyLayout();
+  if (settings.restoreOnLaunch) {
+    await saveSettings({ restoreOnLaunch: false });
+    restoreWorkspace();
+  }
 })();
