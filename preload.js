@@ -20,6 +20,7 @@ contextBridge.exposeInMainWorld('panelsApi', {
   pathForFile: (file) => webUtils.getPathForFile(file),
   isDir: (p) => ipcRenderer.invoke('path:isDir', p),
   makeTitle: (opts) => ipcRenderer.invoke('title:make', opts),
+  getCVs: () => ipcRenderer.invoke('cvs:get'),
   checkUpdate: () => ipcRenderer.invoke('update:check'),
   runUpdate: (workspace, tag) => ipcRenderer.invoke('update:run', workspace, tag),
   onUpdateAvailable: (fn) => ipcRenderer.on('update:available', (_e, info) => fn(info)),

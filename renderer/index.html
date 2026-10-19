@@ -96,6 +96,11 @@
         <small>Shows what each terminal is about in its top bar. The app asks Claude's smallest model, Haiku, for a short title, which costs a tiny amount per session. A name you set with <code>/rename</code> is always used instead.</small>
       </div>
 
+      <div class="field">
+        <label class="radio"><input type="checkbox" id="auto-cvs" /> Keep a CV for each session, so sessions can find experts</label>
+        <small>Once a session has had 5 of your messages, the app asks Haiku for a short CV of what it has worked on, and refreshes it as the session grows. A new session can then find the right expert session for a task, read its CV, search its conversation, and only ask it directly when needed. It checks with you before asking a large session that has not been used recently, because that costs more. Writing each CV costs a tiny amount.</small>
+      </div>
+
       <div class="field inline">
         <label for="font-size">Text size</label>
         <input id="font-size" type="number" min="9" max="24" />

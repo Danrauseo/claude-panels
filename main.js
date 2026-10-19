@@ -35,6 +35,7 @@ const DEFAULT_SETTINGS = {
   harnesses: [], // [{ name, path }] started with /name
   recentLocations: [], // [path]
   autoTitles: true, // ask Haiku for a short title for each open session
+  autoCVs: true, // keep a short CV for each session, so sessions can find experts for a task
   titles: {}, // sessionId -> { title, basedOn, at }
 };
 
@@ -86,6 +87,7 @@ function cleanEnv() {
 // Each terminal's Claude gets a small tool server for searching and reading other terminals'
 // conversations. Inside the packaged app the server's files sit outside the app archive.
 const registryFile = () => path.join(app.getPath('userData'), 'panels.json');
+const cvsFile = () => path.join(app.getPath('userData'), 'cvs.json');
 const mcpScript = path.join(__dirname, 'mcp', 'panels-mcp.js').replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`);
 
 // The list of open terminals that the tool server reads.
@@ -95,7 +97,7 @@ function writeRegistry(workspace) {
 }
 
 function panelsPrompt(number, name) {
-  return (
+  let text =
     `You are running in Claude Panels as terminal ${number}, and your session name is ${name}. ` +
     'The other terminals in the app run other Claude sessions, each named by its number and harness, for example 2-wrap. ' +
     'When the user mentions one of them with @ (such as @2-wrap, or just @2), choose the best way to use it:\n' +
@@ -103,8 +105,17 @@ function panelsPrompt(number, name) {
     'It answers from what it knows, but it has to take a turn to do so.\n' +
     "- To find specific details in that session's conversation without interrupting it, use the panels search_session tool.\n" +
     '- When the user wants all of that context, use the panels read_session tool.\n' +
-    'Use the panels list_panels tool if you are not sure which terminal the user means.'
-  );
+    'Use the panels list_panels tool if you are not sure which terminal the user means.';
+  if (settings.autoCVs !== false) {
+    text +=
+      '\n\nThe app keeps a short CV for past and present sessions. When you start a substantial new task, call the ' +
+      'panels find_expert tool once with a sentence describing it. If it finds an expert session, use it cheapest ' +
+      'first and stop when you have what you need: its CV, then the files it names (they may have changed since), ' +
+      'then search_session for reasoning and details, and only then ask it, with SendMessage if it is open or ' +
+      'ask_expert if it is closed. Asking a large session that has not been used recently is costly, so check with ' +
+      'the user first when find_expert or ask_expert says so. Skip find_expert for small or quick tasks.';
+  }
+  return text;
 }
 
 function startTerminal({ cwd, cols, rows, resumeId, name, number }) {
@@ -127,6 +138,8 @@ function startTerminal({ cwd, cols, rows, resumeId, name, number }) {
           ELECTRON_RUN_AS_NODE: '1',
           CLAUDE_PANELS_REGISTRY: registryFile(),
           CLAUDE_PANELS_SELF: String(number),
+          CLAUDE_PANELS_CVS: cvsFile(),
+          CLAUDE_PANELS_CLAUDE: settings.claudeCommand || 'claude',
         },
       },
     },
@@ -455,6 +468,7 @@ ipcMain.handle('settings:set', (_e, changes) => {
   settings = { ...settings, ...changes };
   saveSettings();
   if (changes.workspace) writeRegistry(changes.workspace);
+  if (changes.autoCVs === true) setTimeout(runCVWorker, 1000);
   return settings;
 });
 
@@ -534,6 +548,41 @@ ipcMain.handle('title:make', async (_e, { sessionId, text, basedOn }) => {
     return title;
   } finally {
     titleBusy = false;
+  }
+});
+
+// ---------- Session CVs ----------
+
+// A separate process writes the CVs, so reading large session files never slows the terminals down.
+// It runs a minute after the app starts and then every ten minutes, one run at a time.
+const cvWorker = path.join(__dirname, 'lib', 'cv-worker.js').replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`);
+let cvRun = null;
+
+function runCVWorker() {
+  if (cvRun || settings.autoCVs === false) return;
+  cvRun = spawn(process.execPath, [cvWorker], {
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', CP_CVS: cvsFile(), CP_CLAUDE: settings.claudeCommand || 'claude' },
+    stdio: 'ignore',
+  });
+  cvRun.on('exit', () => {
+    cvRun = null;
+    send('cvs:changed');
+  });
+}
+
+app.on('will-quit', () => cvRun?.kill());
+
+// The CVs, for ⌘K and the stack view: session id -> { summary, cv, requests, contextTokens }.
+ipcMain.handle('cvs:get', () => {
+  try {
+    const sessions = JSON.parse(fs.readFileSync(cvsFile(), 'utf8')).sessions || {};
+    const out = {};
+    for (const [id, e] of Object.entries(sessions)) {
+      if (e.cv) out[id] = { summary: e.summary, cv: e.cv, requests: e.requests, contextTokens: e.contextTokens };
+    }
+    return out;
+  } catch {
+    return {};
   }
 });
 
@@ -776,6 +825,8 @@ app.whenReady().then(() => {
     if (update) send('update:available', update);
   };
   setTimeout(announce, 15000);
+  setTimeout(runCVWorker, 60000);
+  setInterval(runCVWorker, 10 * 60 * 1000);
   setInterval(announce, 6 * 60 * 60 * 1000);
   app.on('activate', () => {
     if (!win) createWindow();

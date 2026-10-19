@@ -497,6 +497,7 @@ async function addHarness(name, dir) {
 const searchDialog = document.getElementById('search-dialog');
 const searchInput = document.getElementById('search-input');
 let sessions = null;
+let cvs = {}; // session id -> { summary, cv }, written in the background by the app
 
 function buildSearchEntries(query) {
   if (!sessions) return [{ note: 'Loading sessions…' }];
@@ -527,15 +528,20 @@ function buildSearchEntries(query) {
   }
 
   const matches = sessions.filter(
-    (s) => !openIds.has(s.id) && matchesAll(`${displayTitle(s)} ${s.title} ${s.firstPrompt} ${s.lastPrompt} ${s.cwd}`)
+    (s) =>
+      !openIds.has(s.id) &&
+      matchesAll(`${displayTitle(s)} ${s.title} ${s.firstPrompt} ${s.lastPrompt} ${s.cwd} ${cvs[s.id]?.cv || ''}`)
   );
   if (matches.length) entries.push({ group: 'Past sessions' });
   if (!entries.length) return [{ note: 'No terminals or sessions match.' }];
   return entries.concat(matches.slice(0, 150).map((s) => ({
     label: displayTitle(s),
     when: timeAgo(s.updated),
-    detail: tildePath(s.cwd) + (s.folderExists ? '' : '  (folder no longer exists)'),
-    title: `${s.cwd}\nSession ${s.id}`,
+    detail:
+      (cvs[s.id]?.summary ? `${cvs[s.id].summary}  ·  ` : '') +
+      tildePath(s.cwd) +
+      (s.folderExists ? '' : '  (folder no longer exists)'),
+    title: cvs[s.id]?.cv || `${s.cwd}\nSession ${s.id}`,
     run: () => resumeSession(s),
   })));
 }
@@ -553,7 +559,7 @@ async function openSearch() {
   searchList.message = null;
   searchList.render();
   searchDialog.showModal();
-  sessions = await api.listSessions();
+  [sessions, cvs] = await Promise.all([api.listSessions(), api.getCVs()]);
   searchList.render();
 }
 
@@ -939,7 +945,7 @@ async function renderStack() {
   if (stackRefreshing || view !== 'stack') return;
   stackRefreshing = true;
   try {
-    sessions = await api.listSessions();
+    [sessions, cvs] = await Promise.all([api.listSessions(), api.getCVs()]);
     followNewSessions();
     const runningIds = panels.filter((p) => p.running && p.sessionId).map((p) => p.sessionId);
     const activity = await api.sessionActivity(runningIds);
@@ -949,8 +955,9 @@ async function renderStack() {
   }
 }
 
-function sessionLine(text, when, running, activityText, busy, onClick) {
+function sessionLine(text, when, running, activityText, busy, onClick, tooltip = '') {
   const row = el('div', 'sess' + (running ? ' running' : ''));
+  row.title = tooltip;
   row.append(el('span', 'dot'), el('span', 'label', text), el('span', 'when', when));
   if (activityText) row.append(el('span', 'activity' + (busy ? ' busy' : ''), activityText));
   row.addEventListener('click', (e) => {
@@ -997,7 +1004,7 @@ function drawStack(activity) {
     }
     const runningIds = new Set(group.panels.map((p) => p.sessionId));
     for (const s of inGroup.filter((x) => !runningIds.has(x.id)).slice(0, Math.max(0, 3 - lines.length))) {
-      lines.push(sessionLine(displayTitle(s), timeAgo(s.updated), false, '', false, () => resumeSession(s)));
+      lines.push(sessionLine(displayTitle(s), timeAgo(s.updated), false, '', false, () => resumeSession(s), cvs[s.id]?.cv));
     }
     if (!lines.length) card.append(el('div', 'none', 'No saved sessions yet.'));
     card.append(...lines);
@@ -1250,6 +1257,7 @@ function openSettings() {
   document.getElementById('claude-command').value = settings.claudeCommand;
   document.getElementById('font-size').value = settings.fontSize;
   document.getElementById('auto-titles').checked = settings.autoTitles !== false;
+  document.getElementById('auto-cvs').checked = settings.autoCVs !== false;
   renderHarnessList();
   settingsDialog.showModal();
 }
@@ -1283,6 +1291,7 @@ settingsDialog.addEventListener('close', async () => {
     claudeCommand: document.getElementById('claude-command').value.trim() || 'claude',
     fontSize,
     autoTitles: document.getElementById('auto-titles').checked,
+    autoCVs: document.getElementById('auto-cvs').checked,
   });
   for (const p of panels) {
     if (p.term) {

@@ -125,6 +125,17 @@ Press ⌘⇧↓ to see that terminal and all the sessions it mentioned side by s
 
 Press ⌘↓ in that terminal to show the first mentioned session full window. ⌘← and ⌘→ move between the mentioned sessions, and ⌘↑ goes back to the terminal you started from. The terminal you press ⌘↓ in is always the starting point, so pressing ⌘↓ again inside a mentioned session goes one level further, and ⌘↑ steps back one level at a time. Clicking a label does the same as ⌘↓ and goes straight to that session.
 
+## Expert sessions
+
+A session that has worked on something for a while knows a lot about it. The app keeps a short CV for each session so new sessions can use that knowledge instead of working it all out again.
+
+- **CVs.** Once a session has had 5 of your messages, the app asks Haiku for a short CV of it: a one-line summary, what it worked on, the files and systems it knows, the decisions it made and what it left unfinished. The CV is rewritten after every 10 more messages and after the session is compacted. Sessions from the last 90 days whose folder still exists get CVs. A separate background process writes them, so the terminals never slow down. They are stored in `~/Library/Application Support/Claude Panels/cvs.json`.
+- **Finding an expert.** When a session starts a substantial task, it calls the `find_expert` tool, which searches the CVs and returns up to three good matches. By default it only looks at sessions in the same folder, or whose CV mentions that folder. It looks everywhere only if nothing matches.
+- **Using an expert, cheapest first.** Claude reads the expert's CV, then the files it names (to see how they are now), then searches its conversation. It only asks the expert directly when it needs its judgement, such as why something was chosen. If the expert is open in a terminal, Claude messages it. If it is closed, `ask_expert` asks a temporary copy of its conversation, so the original is left unchanged.
+- **Cost check.** Asking a session means reading its whole conversation. If it was used in the last hour, most of that is still in Claude's cache and cheap. If it is large and has not been used recently, `ask_expert` stops and tells Claude to check with you first.
+
+⌘K shows each session's CV summary and searches the CVs, and the stack view shows a session's CV when you hover over it. Turn CVs off in Settings.
+
 ## Resuming after a restart
 
 The app remembers which terminals are open and which Claude session each one is running. Next time you open the app, press ⌘R to bring them all back where you left off. A terminal where you never sent a message starts a fresh session in the same folder.
