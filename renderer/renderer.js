@@ -898,18 +898,23 @@ function openGroup(key, panel) {
   if (panel) setFocus(panel);
 }
 
-// After /clear, Claude starts a new session in the same folder. Point the panel at that newer session.
+// A terminal can move between sessions: /clear starts a new one in the same folder, and Claude's
+// /resume can go back to an earlier one. The app remembers every session a terminal has been on,
+// adds new ones started in its folder since it opened, and treats the most recently active as current.
 function followNewSessions() {
-  const claimed = new Set(panels.map((p) => p.sessionId));
+  const others = (p) => new Set(panels.filter((x) => x !== p).flatMap((x) => [...(x.knownIds || [x.sessionId])]));
   for (const p of panels) {
-    if (!p.running || !p.startedAt) continue;
-    const own = sessions.find((s) => s.id === p.sessionId);
-    const newer = sessions.find(
-      (s) => s.cwd === p.cwd && !claimed.has(s.id) && s.created >= p.startedAt && s.updated > (own?.updated || 0)
-    );
-    if (newer) {
-      claimed.add(newer.id);
-      p.sessionId = newer.id;
+    if (!p.running || !p.startedAt || !p.sessionId) continue;
+    p.knownIds = p.knownIds || new Set([p.sessionId]);
+    const taken = others(p);
+    for (const s of sessions) {
+      if (s.cwd === p.cwd && s.created >= p.startedAt && !taken.has(s.id)) p.knownIds.add(s.id);
+    }
+    const current = sessions
+      .filter((s) => p.knownIds.has(s.id))
+      .sort((a, b) => b.updated - a.updated)[0];
+    if (current && current.id !== p.sessionId) {
+      p.sessionId = current.id;
       saveWorkspace();
     }
   }
