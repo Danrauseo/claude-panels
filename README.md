@@ -24,7 +24,9 @@ The app is not notarized by Apple, so a copy built on one Mac and sent to anothe
 
 ### Updating
 
-Quit the app first. Your terminals come back with ⌘R afterwards.
+The app checks for new versions on GitHub when it starts and every six hours. When there is one, an **Update available** button appears in the top bar. Click it to see what changed. The app then downloads the changes, rebuilds and signs itself, and restarts with your terminals back where they were. This takes a few minutes.
+
+Copies installed before this feature need one manual update to get it. Quit the app, then run this in the folder you downloaded it to:
 
 ```bash
 git pull && npm install && npm run install-app
@@ -37,7 +39,7 @@ For quick testing without installing, run `npm start`.
 | Shortcut | What it does |
 | --- | --- |
 | ⌘N | New terminal |
-| ⌘K | Search past Claude sessions and resume one |
+| ⌘K | Find an open terminal or a past session. Open terminals are listed first, and choosing one takes you to it |
 | ⌘↓ | Show the sessions this terminal mentioned with @, one at a time, full window |
 | ⌘⇧↓ | Show this terminal and every session it mentioned side by side, hiding the others. Press it again, or ⌘↑, to show all terminals |
 | ⌘← ⌘→ | Move between those mentioned sessions |
@@ -45,7 +47,7 @@ For quick testing without installing, run `npm start`.
 | ⌘S | Stack view of open harnesses. Press it again to show all terminals |
 | ⌘R | Resume the terminals you had open when the app last closed |
 | ⌘O | Choose a folder for a new terminal |
-| ⌘U | Choose files and add their paths to the selected terminal |
+| ⌘U | Choose files and add their paths to the selected terminal. You can also drag files onto a terminal |
 | ⌘F | Make the selected terminal fill the window. Press it again to show all terminals. While one fills the window, ⌘1 to ⌘9 switch which one |
 | ⌘W | Close the selected terminal |
 | ⌘1 to ⌘9 | Jump to a terminal, or in the stack view open a harness |
@@ -64,9 +66,21 @@ A harness is a saved folder with a short name. Each new terminal opens with a te
 
 Claude uses the CLAUDE.md and settings it finds in the folder you start it in. You can also add and remove harnesses in Settings.
 
-## Resuming a past session
+## What each terminal shows
 
-⌘K lists every Claude Code session saved on this computer, newest first. Type to search by title, message or folder. Press Enter to resume the session in a panel. This runs `claude --resume` in that session's folder.
+Each terminal's top bar shows its number, a light, its harness and what the session is about:
+
+- **The light** is green while Claude is working, orange when it is waiting for you, and grey once the session has ended.
+- **What it is about** comes from a name you set with `/rename`. Otherwise the app asks Claude's smallest model, Haiku, for a short title after your first message, and refreshes it at most every 15 minutes as you give new requests. This costs a tiny amount per session. You can turn it off in Settings. (Claude Code writes its own titles only for sessions without a name, and the app names each session after its panel so that `@2` works.)
+- A name you set with `/rename` also becomes the name other sessions use to reach that terminal.
+
+## Dragging in files
+
+Drop files onto a terminal to add their paths to what you are typing, the same as ⌘U. Drop a folder onto a new, empty terminal to start Claude in that folder.
+
+## Finding a terminal or resuming a past session
+
+⌘K lists your open terminals first, searchable by what they are about, their harness or their folder. Choosing one takes you to it. Below them it lists every Claude Code session saved on this computer, newest first. Type to search by title, message or folder. Press Enter to resume the session in a panel. This runs `claude --resume` in that session's folder.
 
 ## Stack view
 

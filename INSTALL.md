@@ -95,20 +95,24 @@ Tell the user:
 
 - To keep the app in the Dock, right-click its Dock icon and choose Options, then Keep in Dock.
 - **⌘N** opens a new terminal. Type a folder path, or type `/add name` to save a folder as a harness. From then on, `/name` starts Claude there.
-- **⌘K** finds and resumes a past Claude session.
+- **⌘K** finds an open terminal or a past Claude session.
 - **⌘S** shows each open harness and what its sessions are doing.
 - **⌘R** brings back the terminals that were open when the app last closed.
-- **⌘U** adds file paths to the selected terminal.
+- **⌘U** adds file paths to the selected terminal. Dragging files onto a terminal does the same.
 - In any terminal, typing `@2` lets Claude message, search or read the session in terminal 2.
 - The README has the full list of shortcuts.
 
 ### Updating later
 
+The app checks for updates by itself and shows an **Update available** button in its top bar. Clicking it downloads, rebuilds, reinstalls and restarts the app, and brings the terminals back.
+
+To update by hand instead, quit Claude Panels first, then run:
+
 ```bash
 cd ~/claude-panels && git pull && npm install && npm run install-app
 ```
 
-Quit Claude Panels first. Pressing ⌘R afterwards brings the terminals back.
+Pressing ⌘R afterwards brings the terminals back. Keep the downloaded folder where it is, because the app updates itself from it.
 
 ### If something goes wrong
 
