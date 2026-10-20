@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, Menu, clipboard } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -36,6 +36,7 @@ const DEFAULT_SETTINGS = {
   recentLocations: [], // [path]
   autoTitles: true, // ask Haiku for a short title for each open session
   autoCVs: true, // keep a short CV for each session, so sessions can find experts for a task
+  classicDisplay: false, // start Claude with its classic display, which keeps the whole conversation in the terminal
   titles: {}, // sessionId -> { title, basedOn, at }
 };
 
@@ -166,6 +167,8 @@ function startTerminal({ cwd, cols, rows, resumeId, name, number }) {
     COLORTERM: 'truecolor',
     TERM_PROGRAM: 'ClaudePanels',
     LANG: process.env.LANG || 'en_GB.UTF-8',
+    // The classic display keeps the whole conversation in the terminal, so normal drag-and-copy works.
+    ...(settings.classicDisplay ? { CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN: '1' } : {}),
     CLAUDE_PANELS_PROMPT: prompt,
     CLAUDE_PANELS_NAME: name,
     CLAUDE_PANELS_MCP: JSON.stringify(mcpConfig),
@@ -454,6 +457,34 @@ ipcMain.handle('sessions:activity', (_e, ids) => {
     try { result[id] = readActivity(file); } catch {}
   }
   return result;
+});
+
+// ---------- Copying Claude's last reply (⌘⇧C) ----------
+
+// Copies everything Claude wrote after your latest message, straight from the saved session, so the
+// copy is complete however long the reply is and whatever the terminal is showing.
+ipcMain.handle('reply:copy', (_e, sessionId) => {
+  if (sessionId && !sessionFiles.has(sessionId)) listSessions();
+  const file = sessionId && sessionFiles.get(sessionId);
+  if (!file) return { error: 'This terminal has no saved conversation yet.' };
+  const parts = [];
+  for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
+    if (!/"type":"(user|assistant)"/.test(line)) continue;
+    let entry;
+    try { entry = JSON.parse(line); } catch { continue; }
+    if (entry.isSidechain || entry.isMeta) continue;
+    const content = entry.message?.content;
+    if (entry.type === 'user') {
+      const text = typeof content === 'string' ? content : Array.isArray(content) ? content.filter((c) => c.type === 'text').map((c) => c.text).join('') : '';
+      if (text.trim() && !text.trimStart().startsWith('<')) parts.length = 0; // a new request: start again
+    } else if (Array.isArray(content)) {
+      for (const c of content) if (c.type === 'text' && c.text.trim()) parts.push(c.text.trim());
+    }
+  }
+  if (!parts.length) return { error: 'Claude has not replied yet.' };
+  const text = parts.join('\n\n');
+  clipboard.writeText(text);
+  return { lines: text.split('\n').length, chars: text.length };
 });
 
 // ---------- Settings, folders and files ----------
@@ -754,7 +785,19 @@ function buildMenu() {
         { label: 'Settings', accelerator: 'CmdOrCtrl+,', click: () => send('menu:settings') },
       ],
     },
-    { role: 'editMenu' },
+    {
+      label: 'Edit',
+      submenu: [
+        { role: 'undo' },
+        { role: 'redo' },
+        { type: 'separator' },
+        { role: 'cut' },
+        { role: 'copy' },
+        { label: "Copy Claude's Last Reply", accelerator: 'CmdOrCtrl+Shift+C', click: () => send('menu:copy-reply') },
+        { role: 'paste' },
+        { role: 'selectAll' },
+      ],
+    },
     {
       label: 'View',
       submenu: [{ role: 'togglefullscreen' }, { role: 'toggleDevTools' }],

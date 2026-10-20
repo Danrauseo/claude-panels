@@ -662,6 +662,9 @@ async function launch(panel, dir, { resumeId = null, title = null, harnessName =
     cursorBlink: true,
     allowProposedApi: true,
     macOptionIsMeta: true,
+    // Holding Option while dragging selects text in the terminal itself, even while Claude Code is
+    // using the mouse, so ⌘C copies exactly what you selected.
+    macOptionClickForcesSelection: true,
     scrollback: 10000,
     linkHandler: { activate: (_e, uri) => openLinkTarget(uri), allowNonHttpProtocols: true },
   });
@@ -746,6 +749,18 @@ api.onExit((id) => {
   panel.head.querySelector('.status').textContent = 'ended';
   panel.term.write('\r\n\x1b[2m[This session has ended. Press ⌘W to close the panel.]\x1b[0m\r\n');
 });
+
+// ---------- Copying Claude's last reply (⌘⇧C) ----------
+
+async function copyLastReply() {
+  const panel = focused;
+  if (!panel?.sessionId) return;
+  // Make sure the panel is on the session it is showing now, in case /clear or /resume moved it.
+  sessions = await api.listSessions();
+  followNewSessions();
+  const r = await api.copyReply(panel.sessionId);
+  flashNote(panel, r.error || `Copied Claude's last reply (${r.lines} line${r.lines === 1 ? '' : 's'})`);
+}
 
 // ---------- Adding files (⌘U) ----------
 
@@ -1258,6 +1273,7 @@ function openSettings() {
   document.getElementById('font-size').value = settings.fontSize;
   document.getElementById('auto-titles').checked = settings.autoTitles !== false;
   document.getElementById('auto-cvs').checked = settings.autoCVs !== false;
+  document.getElementById('classic-display').checked = Boolean(settings.classicDisplay);
   renderHarnessList();
   settingsDialog.showModal();
 }
@@ -1292,6 +1308,7 @@ settingsDialog.addEventListener('close', async () => {
     fontSize,
     autoTitles: document.getElementById('auto-titles').checked,
     autoCVs: document.getElementById('auto-cvs').checked,
+    classicDisplay: document.getElementById('classic-display').checked,
   });
   for (const p of panels) {
     if (p.term) {
@@ -1321,6 +1338,7 @@ api.onMenu('new', () => addPanel());
 api.onMenu('search', openSearch);
 api.onMenu('browse', browseShortcut);
 api.onMenu('upload', addFilesToTerminal);
+api.onMenu('copy-reply', copyLastReply);
 api.onMenu('check-update', checkUpdateNow);
 api.onMenu('close', () => view === 'grid' && closePanel(focused));
 api.onMenu('layout', toggleOddLayout);

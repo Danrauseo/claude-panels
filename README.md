@@ -61,6 +61,8 @@ Add `--notes notes.md` to use your own release notes.
 | ⌘S | Stack view of open harnesses. Press it again to show all terminals |
 | ⌘R | Resume the terminals you had open when the app last closed |
 | ⌘O | Choose a folder for a new terminal |
+| ⌘⇧C | Copy Claude's whole last reply, however long |
+| ⌥ drag | Select text in the terminal for ⌘C, even while Claude Code is using the mouse |
 | ⌘U | Choose files and add their paths to the selected terminal. You can also drag files onto a terminal |
 | ⌘F | Make the selected terminal fill the window. Press it again to show all terminals. While one fills the window, ⌘1 to ⌘9 switch which one |
 | ⌘W | Close the selected terminal |
@@ -135,6 +137,14 @@ A session that has worked on something for a while knows a lot about it. The app
 - **Cost check.** Asking a session means reading its whole conversation. If it was used in the last hour, most of that is still in Claude's cache and cheap. If it is large and has not been used recently, `ask_expert` stops and tells Claude to check with you first.
 
 ⌘K shows each session's CV summary and searches the CVs, and the stack view shows a session's CV when you hover over it. Turn CVs off in Settings.
+
+## Copying text
+
+Claude Code's full-screen display (its default for many people) draws the conversation itself and only keeps what is on screen in the terminal. Text that has scrolled out of a panel can't be selected, and dragging selects inside Claude Code rather than in the terminal. Three ways around that:
+
+- **⌘⇧C** copies Claude's whole last reply, read from the saved session, however long it is.
+- **Hold Option and drag** to select text in the terminal itself, then press ⌘C.
+- **Settings > Use Claude Code's classic display** keeps the whole conversation in the terminal, so you can scroll and drag to copy anything. It applies to terminals opened after you save.
 
 ## Resuming after a restart
 

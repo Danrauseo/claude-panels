@@ -101,6 +101,11 @@
         <small>Once a session has had 5 of your messages, the app asks Haiku for a short CV of what it has worked on, and refreshes it as the session grows. A new session can then find the right expert session for a task, read its CV, search its conversation, and only ask it directly when needed. It checks with you before asking a large session that has not been used recently, because that costs more. Writing each CV costs a tiny amount.</small>
       </div>
 
+      <div class="field">
+        <label class="radio"><input type="checkbox" id="classic-display" /> Use Claude Code's classic display</label>
+        <small>Claude Code's full-screen display only keeps what is on screen in the terminal, so you can't select text that has scrolled out of a panel. The classic display keeps the whole conversation in the terminal, so you can scroll and drag to copy anything. In either display, <kbd>⌘⇧C</kbd> copies Claude's whole last reply, and holding Option while dragging selects text for <kbd>⌘C</kbd>. Applies to terminals you open after saving.</small>
+      </div>
+
       <div class="field inline">
         <label for="font-size">Text size</label>
         <input id="font-size" type="number" min="9" max="24" />
@@ -122,6 +127,8 @@
           <kbd>⌘K</kbd><span>Find an open terminal or a past session</span>
           <kbd>⌘S</kbd><span>Stack view of open harnesses, or back to all terminals</span>
           <kbd>⌘R</kbd><span>Bring back the terminals open when the app last closed</span>
+          <kbd>⌘⇧C</kbd><span>Copy Claude's whole last reply</span>
+          <kbd>⌥ drag</kbd><span>Select text in the terminal for ⌘C, even while Claude Code uses the mouse</span>
           <kbd>⌘U</kbd><span>Add file paths to the selected terminal</span>
           <kbd>Drag in</kbd><span>Drop files on a terminal to add their paths, or a folder on a new terminal to start there</span>
           <kbd>⌘O</kbd><span>Choose a folder to start Claude in</span>
