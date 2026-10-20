@@ -672,6 +672,7 @@ async function launch(panel, dir, { resumeId = null, title = null, harnessName =
   term.loadAddon(fit);
   term.loadAddon(new WebLinksAddon.WebLinksAddon((_e, uri) => openLinkTarget(uri)));
   term.open(host);
+  keepDragsFlowing(term, host);
   registerFileLinks(term);
   fit.fit();
 
@@ -749,6 +750,48 @@ api.onExit((id) => {
   panel.head.querySelector('.status').textContent = 'ended';
   panel.term.write('\r\n\x1b[2m[This session has ended. Press ⌘W to close the panel.]\x1b[0m\r\n');
 });
+
+// ---------- Mouse drags for Claude Code ----------
+
+// Claude Code's full-screen display selects text itself, so it needs every mouse movement while you
+// drag. When you first click, Claude Code re-sends its mouse settings, briefly switching drag reporting
+// off and on. The terminal library then stops passing on the rest of that drag, so Claude Code selects
+// less than you dragged over. While the button is held, pass the movement on here as well. The terminal
+// library drops a repeat of the same position, so nothing is sent twice. Holding Option still makes a
+// normal terminal selection instead.
+function keepDragsFlowing(term, host) {
+  let dragging = false;
+  host.addEventListener(
+    'mousedown',
+    (e) => {
+      dragging = e.button === 0 && !e.altKey && term._core.coreMouseService.areMouseEventsActive;
+    },
+    true
+  );
+  document.addEventListener('mousemove', (e) => {
+    if (!dragging || !(e.buttons & 1)) return;
+    const mouse = term._core.coreMouseService;
+    if (!mouse.areMouseEventsActive) return;
+    // Positions outside the panel are clamped to its edge, so dragging past the top or bottom keeps
+    // telling Claude Code to scroll and extend the selection.
+    const pos = term._core._mouseService.getMouseReportCoords(e, term._core.screenElement);
+    if (!pos) return;
+    mouse.triggerMouseEvent({
+      col: pos.col,
+      row: pos.row,
+      x: pos.x,
+      y: pos.y,
+      button: 0, // left button
+      action: 32, // movement
+      ctrl: e.ctrlKey,
+      alt: e.altKey,
+      shift: e.shiftKey,
+    });
+  });
+  document.addEventListener('mouseup', () => {
+    dragging = false;
+  });
+}
 
 // ---------- Copying Claude's last reply (⌘⇧C) ----------
 

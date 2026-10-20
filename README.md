@@ -140,11 +140,11 @@ A session that has worked on something for a while knows a lot about it. The app
 
 ## Copying text
 
-Claude Code's full-screen display (its default for many people) draws the conversation itself and only keeps what is on screen in the terminal. Text that has scrolled out of a panel can't be selected, and dragging selects inside Claude Code rather than in the terminal. Three ways around that:
+In Claude Code's full-screen display (its default for many people), Claude Code does the selecting itself. Drag over text and it is copied when you let go of the mouse. Drag past the top or bottom of the panel and Claude Code scrolls and keeps selecting, so you can copy text longer than the panel. Other ways to copy:
 
 - **⌘⇧C** copies Claude's whole last reply, read from the saved session, however long it is.
-- **Hold Option and drag** to select text in the terminal itself, then press ⌘C.
-- **Settings > Use Claude Code's classic display** keeps the whole conversation in the terminal, so you can scroll and drag to copy anything. It applies to terminals opened after you save.
+- **Hold Option and drag** to select text in the terminal itself, then press ⌘C. This only reaches what is on screen.
+- **Settings > Use Claude Code's classic display** keeps the whole conversation in the terminal for ordinary scrolling and selecting, without the full-screen extras.
 
 ## Resuming after a restart
 
