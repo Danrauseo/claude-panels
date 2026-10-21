@@ -359,3 +359,19 @@ code { font-family: "SF Mono", Menlo, monospace; font-size: 11px; color: var(--b
 .btn.update { background: #173a24; border-color: #22603a; color: #b7f0c8; }
 .btn.update:hover { background: #1d4a2e; }
 .btn.update:disabled { cursor: default; opacity: 0.9; }
+
+/* ---------- Shortcuts window (⌘/) ---------- */
+
+#shortcuts-dialog { width: 860px; max-height: 86vh; overflow: auto; }
+.shortcuts-head { display: flex; align-items: baseline; gap: 14px; margin-bottom: 6px; }
+.shortcuts-head h2 { margin: 0; }
+.shortcuts-head .hints { margin: 0; padding: 0; }
+.shortcut-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 0 28px; }
+.shortcut-columns h3 {
+  margin: 14px 0 6px;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--faint);
+}
+@media (max-width: 760px) { .shortcut-columns { grid-template-columns: 1fr; } }

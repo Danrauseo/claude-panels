@@ -1261,6 +1261,24 @@ function drawMentions(panel, children, activity) {
 
 setInterval(refreshMentions, 2000);
 
+// ---------- Shortcuts window (⌘/ or ⌘?) ----------
+
+const shortcutsDialog = document.getElementById('shortcuts-dialog');
+let shortcutsToggledAt = 0;
+
+function toggleShortcuts() {
+  // ⌘/ comes from the menu and ⌘? from the keyboard. Ignore a second toggle straight after the first.
+  if (Date.now() - shortcutsToggledAt < 250) return;
+  shortcutsToggledAt = Date.now();
+  if (shortcutsDialog.open) shortcutsDialog.close();
+  else shortcutsDialog.showModal();
+}
+shortcutsDialog.addEventListener('close', () => setFocus(focused));
+// Clicking outside the list closes it.
+shortcutsDialog.addEventListener('click', (e) => {
+  if (e.target === shortcutsDialog) shortcutsDialog.close();
+});
+
 // ---------- Settings dialog ----------
 
 const settingsDialog = document.getElementById('settings-dialog');
@@ -1381,6 +1399,7 @@ api.onMenu('new', () => addPanel());
 api.onMenu('search', openSearch);
 api.onMenu('browse', browseShortcut);
 api.onMenu('upload', addFilesToTerminal);
+api.onMenu('shortcuts', toggleShortcuts);
 api.onMenu('copy-reply', copyLastReply);
 api.onMenu('check-update', checkUpdateNow);
 api.onMenu('close', () => view === 'grid' && closePanel(focused));
@@ -1416,7 +1435,10 @@ window.addEventListener('keydown', (e) => {
       e.preventDefault();
       moveMention(e.key === 'ArrowLeft' ? -1 : 1);
     }
-  } else if (e.key === 'Escape' && view === 'stack' && !searchDialog.open && !settingsDialog.open) {
+  } else if (e.metaKey && (e.key === '?' || e.key === '/')) {
+    e.preventDefault();
+    toggleShortcuts();
+  } else if (e.key === 'Escape' && view === 'stack' && !searchDialog.open && !settingsDialog.open && !shortcutsDialog.open) {
     toggleStack();
   }
 });

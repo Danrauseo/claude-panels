@@ -49,6 +49,7 @@
       <kbd>⌘F</kbd><span>Make the selected panel fill the window</span>
       <kbd>⌘W</kbd><span>Close terminal</span>
       <kbd>⌘1 to 9</kbd><span>Jump to a terminal</span>
+      <kbd>⌘/</kbd><span>All shortcuts</span>
     </div>
   </section>
 
@@ -113,47 +114,73 @@
 
       <p class="note">Changes to the instruction and the command apply to terminals you open after saving.</p>
 
-      <div class="field">
-        <label>Keyboard shortcuts</label>
-        <div class="shortcut-guide">
-          <kbd>⌘N</kbd><span>New terminal</span>
-          <kbd>⌘W</kbd><span>Close the selected terminal</span>
-          <kbd>⌘1 to ⌘9</kbd><span>Jump to that terminal</span>
-          <kbd>⌘F</kbd><span>Make the selected terminal fill the window, or show all again</span>
-          <kbd>⌘↓</kbd><span>Show the sessions this terminal mentioned with @, full window</span>
-          <kbd>⌘⇧↓</kbd><span>Show this terminal and every session it mentioned, side by side</span>
-          <kbd>⌘← ⌘→</kbd><span>Move between those mentioned sessions</span>
-          <kbd>⌘↑</kbd><span>Go back: to the terminal you started from, or to all terminals</span>
-          <kbd>⌘K</kbd><span>Find an open terminal or a past session</span>
-          <kbd>⌘S</kbd><span>Stack view of open harnesses, or back to all terminals</span>
-          <kbd>⌘R</kbd><span>Bring back the terminals open when the app last closed</span>
-          <kbd>⌘⇧C</kbd><span>Copy Claude's whole last reply</span>
-          <kbd>⌥ drag</kbd><span>Select text in the terminal for ⌘C, even while Claude Code uses the mouse</span>
-          <kbd>⌘U</kbd><span>Add file paths to the selected terminal</span>
-          <kbd>Drag in</kbd><span>Drop files on a terminal to add their paths, or a folder on a new terminal to start there</span>
-          <kbd>⌘O</kbd><span>Choose a folder to start Claude in</span>
-          <kbd>⌘L</kbd><span>With an odd number of terminals, move the last one to the bottom or side</span>
-          <kbd>⌘,</kbd><span>Settings</span>
-          <kbd>⇧↵</kbd><span>New line in your message to Claude</span>
-        </div>
-        <label class="guide-sub">In a new terminal</label>
-        <div class="shortcut-guide">
-          <kbd>/name</kbd><span>Start Claude in a saved harness</span>
-          <kbd>/add name</kbd><span>Choose a folder and save it as a harness</span>
-          <kbd>/browse</kbd><span>Choose a folder</span>
-          <kbd>/home</kbd><span>Start in your home folder</span>
-        </div>
-        <label class="guide-sub">Inside Claude</label>
-        <div class="shortcut-guide">
-          <kbd>@2</kbd><span>Use the session in terminal 2. Claude messages, searches or reads it as needed.</span>
-        </div>
-      </div>
+      <p class="note">Press <kbd>⌘/</kbd> to see every keyboard shortcut.</p>
 
       <div class="dialog-buttons">
         <button value="cancel" class="btn">Cancel</button>
         <button value="save" id="settings-save" class="btn">Save</button>
       </div>
     </form>
+  </dialog>
+
+  <dialog id="shortcuts-dialog">
+    <div class="shortcuts-head">
+      <h2>Keyboard shortcuts</h2>
+      <span class="hints"><kbd>⌘/</kbd> or <kbd>esc</kbd> to close</span>
+    </div>
+    <div class="shortcut-columns">
+      <section>
+        <h3>Terminals</h3>
+        <div class="shortcut-guide">
+          <kbd>⌘N</kbd><span>New terminal</span>
+          <kbd>⌘W</kbd><span>Close the selected terminal</span>
+          <kbd>⌘1 to ⌘9</kbd><span>Jump to that terminal</span>
+          <kbd>⌘F</kbd><span>Make the selected terminal fill the window, or show all again</span>
+          <kbd>⌘L</kbd><span>With an odd number of terminals, move the last one to the bottom or side</span>
+          <kbd>⌘R</kbd><span>Bring back the terminals open when the app last closed</span>
+        </div>
+        <h3>Finding things</h3>
+        <div class="shortcut-guide">
+          <kbd>⌘K</kbd><span>Find an open terminal or a past session</span>
+          <kbd>⌘S</kbd><span>Stack view of open harnesses, or back to all terminals</span>
+        </div>
+        <h3>Mentioned sessions</h3>
+        <div class="shortcut-guide">
+          <kbd>⌘↓</kbd><span>Show the sessions this terminal mentioned with @, full window</span>
+          <kbd>⌘⇧↓</kbd><span>Show this terminal and every session it mentioned, side by side</span>
+          <kbd>⌘← ⌘→</kbd><span>Move between those mentioned sessions</span>
+          <kbd>⌘↑</kbd><span>Go back: to the terminal you started from, or to all terminals</span>
+        </div>
+      </section>
+      <section>
+        <h3>Files and copying</h3>
+        <div class="shortcut-guide">
+          <kbd>Drag</kbd><span>Select text in Claude and let go to copy it. Drag past the edge to keep going.</span>
+          <kbd>⌘⇧C</kbd><span>Copy Claude's whole last reply</span>
+          <kbd>⌥ drag</kbd><span>Select text in the terminal itself, then ⌘C</span>
+          <kbd>⌘U</kbd><span>Add file paths to the selected terminal</span>
+          <kbd>Drop</kbd><span>Drop files on a terminal to add their paths, or a folder on a new terminal to start there</span>
+          <kbd>⌘O</kbd><span>Choose a folder to start Claude in</span>
+        </div>
+        <h3>In a new terminal</h3>
+        <div class="shortcut-guide">
+          <kbd>/name</kbd><span>Start Claude in a saved harness</span>
+          <kbd>/add name</kbd><span>Choose a folder and save it as a harness</span>
+          <kbd>/browse</kbd><span>Choose a folder</span>
+          <kbd>/home</kbd><span>Start in your home folder</span>
+        </div>
+        <h3>Inside Claude</h3>
+        <div class="shortcut-guide">
+          <kbd>@2</kbd><span>Use the session in terminal 2. Claude messages, searches or reads it as needed.</span>
+          <kbd>⇧↵</kbd><span>New line in your message</span>
+        </div>
+        <h3>App</h3>
+        <div class="shortcut-guide">
+          <kbd>⌘,</kbd><span>Settings</span>
+          <kbd>⌘/</kbd><span>This list of shortcuts</span>
+        </div>
+      </section>
+    </div>
   </dialog>
 
   <script src="../node_modules/@xterm/xterm/lib/xterm.js"></script>

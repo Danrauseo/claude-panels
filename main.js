@@ -803,6 +803,10 @@ function buildMenu() {
       submenu: [{ role: 'togglefullscreen' }, { role: 'toggleDevTools' }],
     },
     { role: 'windowMenu' },
+    {
+      role: 'help',
+      submenu: [{ label: 'Keyboard Shortcuts', accelerator: 'CmdOrCtrl+/', click: () => send('menu:shortcuts') }],
+    },
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }

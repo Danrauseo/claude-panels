@@ -68,7 +68,8 @@ Add `--notes notes.md` to use your own release notes.
 | ⌘W | Close the selected terminal |
 | ⌘1 to ⌘9 | Jump to a terminal, or in the stack view open a harness |
 | ⌘L | Put the last panel at the bottom or on the side when an odd number are open |
-| ⌘, | Settings, which also lists these shortcuts |
+| ⌘, | Settings |
+| ⌘/ | A window listing every shortcut. ⌘? works too |
 | Shift+Enter | New line in Claude |
 
 ## Starting Claude in a harness
