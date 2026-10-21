@@ -1,6 +1,6 @@
 {
   "name": "claude-panels",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Run several Claude Code sessions side by side in one Mac app",
   "main": "main.js",
   "private": true,
