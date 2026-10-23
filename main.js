@@ -733,10 +733,13 @@ ipcMain.handle('update:run', async (_e, workspace, tag) => {
   updateRunning = true;
   try {
     // Move the folder's branch forward to the release. This refuses to throw away local changes.
-    await runStep('Downloading the new version…', 'git fetch --tags --quiet && git merge --ff-only --quiet "refs/tags/$CP_TAG"', {
-      CP_TAG: tag,
-    });
-    await runStep('Installing the parts the app needs…', 'npm install');
+    // npm rewrites package-lock.json on some Macs, so that one file is put back first.
+    await runStep(
+      'Downloading the new version…',
+      'git checkout -- package-lock.json 2>/dev/null; git fetch --tags --quiet && git merge --ff-only --quiet "refs/tags/$CP_TAG"',
+      { CP_TAG: tag }
+    );
+    await runStep('Installing the parts the app needs…', 'npm install && (git checkout -- package-lock.json 2>/dev/null; true)');
     await runStep('Building and signing the app. This takes a few minutes…', 'npm run dist');
 
     if (!app.isPackaged) {
