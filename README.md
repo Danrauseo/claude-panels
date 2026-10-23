@@ -68,6 +68,7 @@ Add `--notes notes.md` to use your own release notes.
 | ⌘W | Close the selected terminal |
 | ⌘1 to ⌘9 | Jump to a terminal, or in the stack view open a harness |
 | ⌘L | Put the last panel at the bottom or on the side when an odd number are open |
+| @ | At the start of a word in Claude, list your other terminals to mention |
 | ⌘, | Settings |
 | ⌘/ | A window listing every shortcut. ⌘? works too |
 | Shift+Enter | New line in Claude |
@@ -88,8 +89,16 @@ Claude uses the CLAUDE.md and settings it finds in the folder you start it in. Y
 Each terminal's top bar shows its number, a light, its harness and what the session is about:
 
 - **The light** is green while Claude is working, orange when it is waiting for you, and grey once the session has ended.
+- **The harness** is shown in its own colour. Each harness always gets the same colour, so you can tell at a glance which one a terminal is in. The terminal you are using has a brighter top bar than the others.
+- **Subagents.** When Claude starts subagents, a small spinning label shows how many are working, for example "2 subagents". Hover over it to see what each one is doing and how long it has been running. It goes away when they finish.
 - **What it is about** comes from a name you set with `/rename`. Otherwise the app asks Claude's smallest model, Haiku, for a short title after your first message, and refreshes it at most every 15 minutes as you give new requests. This costs a tiny amount per session. You can turn it off in Settings. (Claude Code writes its own titles only for sessions without a name, and the app names each session after its panel so that `@2` works.)
 - A name you set with `/rename` also becomes the name other sessions use to reach that terminal.
+
+## Approving from the terminal you are using
+
+When a terminal you are not looking at stops to ask for your approval, for example to run a command, a small card appears at the bottom right of the terminal you are using. It shows which terminal is asking, what it wants to do, and its choices as buttons. Click a choice to answer it without leaving your terminal, or click "Go to it" to switch to that terminal. The card goes away once the question is answered.
+
+Only you can answer these. Claude in one terminal cannot approve anything for another.
 
 ## Dragging in files
 
@@ -112,7 +121,7 @@ Click a card or press ⌘1 to ⌘9 to show only that harness's terminals. Press 
 
 ## Using one terminal's session from another
 
-Each terminal keeps its number while it is open, and its Claude session is named after it, for example `2-wrap`. In any terminal, type `@2` and Claude Code offers `@2-wrap` from its own list of your sessions. Then say what you want, and Claude picks how to get it:
+Each terminal keeps its number while it is open, and its Claude session is named after it, for example `2-wrap`. In any terminal, type `@` at the start of a word and the app shows a short list of your other open terminals, with their harness and what they are about. Keep typing to narrow it, pick one with the arrow keys and Enter, or press Esc to close the list and use Claude Code's own `@` list for files instead. Then say what you want, and Claude picks how to get it:
 
 - **Ask or tell that session something**: Claude sends it a message. The other session answers from what it knows, and the reply arrives as a `› Message from @2-wrap: …` line. This uses Claude Code's built-in messaging between sessions, so the other session takes a turn to answer.
 - **Find specific details**: Claude searches that session's saved conversation with the app's `search_session` tool. This does not interrupt the other session.
@@ -136,6 +145,8 @@ A session that has worked on something for a while knows a lot about it. The app
 - **Finding an expert.** When a session starts a substantial task, it calls the `find_expert` tool, which searches the CVs and returns up to three good matches. By default it only looks at sessions in the same folder, or whose CV mentions that folder. It looks everywhere only if nothing matches.
 - **Using an expert, cheapest first.** Claude reads the expert's CV, then the files it names (to see how they are now), then searches its conversation. It only asks the expert directly when it needs its judgement, such as why something was chosen. If the expert is open in a terminal, Claude messages it. If it is closed, `ask_expert` asks a temporary copy of its conversation, so the original is left unchanged.
 - **Cost check.** Asking a session means reading its whole conversation. If it was used in the last hour, most of that is still in Claude's cache and cheap. If it is large and has not been used recently, `ask_expert` stops and tells Claude to check with you first.
+
+- **Suggested experts.** After your first message in a new terminal, the app checks the CVs itself. If a past session in the same folder clearly matches what you asked, a small "Expert:" label appears in the top bar. Click it to tell Claude to use that session, or click × to dismiss it.
 
 ⌘K shows each session's CV summary and searches the CVs, and the stack view shows a session's CV when you hover over it. Turn CVs off in Settings.
 

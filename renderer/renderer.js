@@ -299,8 +299,11 @@ function addPanel(wantedNumber) {
   panel.head.append(
     el('span', 'num'),
     el('span', 'own-light'),
+    el('span', 'harness'),
     el('span', 'title', 'New terminal'),
     el('span', 'path'),
+    el('span', 'agents'),
+    el('span', 'expert'),
     el('span', 'mentions'),
     el('span', 'status')
   );
@@ -647,7 +650,8 @@ async function launch(panel, dir, { resumeId = null, title = null, harnessName =
   panel.cwd = dir;
   panel.harnessName = harnessName;
   panel.title = title || baseName(dir);
-  panel.head.querySelector('.title').textContent = panel.title;
+  setHarnessPill(panel);
+  panel.head.querySelector('.title').textContent = panel.title === (harnessName || baseName(dir)) ? '' : panel.title;
   panel.head.querySelector('.path').textContent = tildePath(dir);
   panel.head.querySelector('.path').title = dir;
   panel.body.innerHTML = '';
@@ -685,6 +689,9 @@ async function launch(panel, dir, { resumeId = null, title = null, harnessName =
     // Leave app shortcuts such as ⌘N, ⌘K and ⌘W to the app menu.
     if (e.metaKey && !['c', 'v', 'a'].includes(e.key)) return false;
 
+    // While the Panels @ list is open, the arrow keys, Enter, Tab and Esc work the list.
+    if (panel.mentionList && e.type === 'keydown' && mentionListKey(panel, e)) return false;
+
     return true;
   });
 
@@ -718,7 +725,11 @@ async function launch(panel, dir, { resumeId = null, title = null, harnessName =
     pendingData.delete(panel.ptyId);
   }
 
-  term.onData((data) => panel.running && api.write(panel.ptyId, data));
+  term.onData((data) => {
+    if (!panel.running) return;
+    api.write(panel.ptyId, data);
+    trackTyping(panel, data);
+  });
   term.onResize(({ cols, rows }) => panel.ptyId !== null && api.resize(panel.ptyId, cols, rows));
 
   panel.resizeObserver = new ResizeObserver(() => {
@@ -1054,6 +1065,7 @@ function drawStack(activity) {
       let text = 'Waiting for you';
       if (act.pending) text = `Running ${act.pending}`;
       else if (act.working) text = 'Thinking…';
+      if (act.agents?.length) text += `  ·  ${act.agents.length} subagent${act.agents.length === 1 ? '' : 's'} working`;
       if (act.background?.length) text += `  ·  in the background: ${act.background.join(', ')}`;
       lines.push(
         sessionLine((s && displayTitle(s)) || p.title || 'New session', s ? timeAgo(s.updated) : 'now', true, text,
@@ -1224,6 +1236,7 @@ async function refreshMentions() {
     for (const p of panels) {
       drawMentions(p, mentionMap.get(p) || [], activity);
       drawOwnLight(p, activity[p.sessionId] || {});
+      drawAgents(p, activity[p.sessionId]?.agents || []);
     }
   } finally {
     mentionsRefreshing = false;
@@ -1246,7 +1259,7 @@ function drawMentions(panel, children, activity) {
     const state = !child.running ? 'off' : act.pending || act.working ? 'working' : 'idle';
     const words = { working: 'working', idle: 'waiting', off: 'ended' }[state];
     const badge = el('button', `mention ${state}`);
-    badge.append(el('span', 'light'), el('span', null, child.name || `${child.number}`));
+    badge.append(el('span', 'light'), el('span', null, `↗ ${child.name || child.number}`));
     badge.title = `${child.name || 'Panel ' + child.number} is ${words}${act.pending ? ': ' + act.pending : ''}. ⌘↓ shows the mentioned sessions.`;
     badge.addEventListener('mousedown', (e) => e.stopPropagation());
     badge.addEventListener('click', (e) => {
@@ -1278,6 +1291,281 @@ shortcutsDialog.addEventListener('close', () => setFocus(focused));
 shortcutsDialog.addEventListener('click', (e) => {
   if (e.target === shortcutsDialog) shortcutsDialog.close();
 });
+
+// ---------- Which harness a panel is in ----------
+
+// Each harness gets its own colour, worked out from its name, so terminals in the same harness match.
+function harnessColour(label) {
+  let h = 0;
+  for (const ch of label) h = (h * 31 + ch.charCodeAt(0)) % 360;
+  return h;
+}
+
+function setHarnessPill(panel) {
+  const pill = panel.head.querySelector('.harness');
+  if (!panel.cwd) return (pill.textContent = '');
+  const label = panel.harnessName || baseName(panel.cwd);
+  if (pill.textContent === label) return;
+  const hue = harnessColour(label);
+  pill.textContent = label;
+  pill.title = `Harness: ${label}\n${panel.cwd}`;
+  pill.style.setProperty('--hue', hue);
+}
+
+// ---------- Subagents ----------
+
+function drawAgents(panel, agents) {
+  const box = panel.head.querySelector('.agents');
+  if (!agents.length) {
+    box.textContent = '';
+    box.title = '';
+    return;
+  }
+  const mins = (since) => Math.max(0, Math.round((Date.now() - since) / 60000));
+  box.textContent = `${agents.length} subagent${agents.length === 1 ? '' : 's'}`;
+  box.title =
+    'Subagents working:\n' + agents.map((a) => `• ${a.description} (${mins(a.since)} min)`).join('\n');
+}
+
+// ---------- The Panels @ list ----------
+
+// Claude Code's own @ list mixes in files and connectors, so other terminals are hard to find. When you
+// type @ at the start of a word, Panels shows the other open terminals. Arrow keys and Enter (or a click)
+// fill in the name. Typing narrows the list. Esc closes it, and so does anything that looks like a file
+// path, so Claude's own file mentions still work.
+function trackTyping(panel, data) {
+  if (panel.mentionList) {
+    if (data === '\x7f') {
+      if (!panel.mentionFilter) return closeMentionList(panel);
+      panel.mentionFilter = panel.mentionFilter.slice(0, -1);
+      return drawMentionList(panel);
+    }
+    if (/^[\x20-\x7e]+$/.test(data) && !/[\s/.~]/.test(data)) {
+      panel.mentionFilter += data;
+      return drawMentionList(panel);
+    }
+    closeMentionList(panel);
+  }
+  if (data === '@' && panel.atWordStart !== false) {
+    panel.mentionFilter = '';
+    openMentionList(panel);
+  }
+  // Remember whether the next character starts a word.
+  if (data === '\r' || data === '\x15' || data === '\x03' || data === ' ') panel.atWordStart = true;
+  else if (/^[\x21-\x7e]$/.test(data)) panel.atWordStart = false;
+}
+
+function mentionCandidates(panel) {
+  const q = (panel.mentionFilter || '').toLowerCase();
+  return panels
+    .filter((p) => p !== panel && p.cwd)
+    .filter(
+      (p) =>
+        !q ||
+        String(p.number).startsWith(q) ||
+        (p.name || '').toLowerCase().includes(q) ||
+        (p.harnessName || baseName(p.cwd)).toLowerCase().includes(q) ||
+        (p.about || '').toLowerCase().includes(q)
+    );
+}
+
+function openMentionList(panel) {
+  if (!panels.some((p) => p !== panel && p.cwd)) return; // no other terminals to mention
+  panel.mentionList = el('div', 'mention-list');
+  panel.mentionIndex = 0;
+  panel.body.append(panel.mentionList);
+  drawMentionList(panel);
+}
+
+function closeMentionList(panel) {
+  panel.mentionList?.remove();
+  panel.mentionList = null;
+}
+
+function drawMentionList(panel) {
+  const list = panel.mentionList;
+  if (!list) return;
+  const items = mentionCandidates(panel);
+  if (!items.length) return closeMentionList(panel);
+  panel.mentionIndex = Math.min(panel.mentionIndex, items.length - 1);
+  list.innerHTML = '';
+  list.append(el('div', 'mention-list-head', 'Terminals · ↑↓ ↵ to pick · esc'));
+  items.slice(0, 8).forEach((p, i) => {
+    const row = el('div', 'mention-row' + (i === panel.mentionIndex ? ' selected' : ''));
+    const light = el('span', 'own-light ' + (p.head.querySelector('.own-light').className.split(' ')[1] || ''));
+    const pill = el('span', 'harness', p.harnessName || baseName(p.cwd));
+    pill.style.setProperty('--hue', harnessColour(p.harnessName || baseName(p.cwd)));
+    row.append(el('span', 'num', String(p.number)), light, pill, el('span', 'about', p.about || p.name));
+    row.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      pickMention(panel, p);
+    });
+    list.append(row);
+  });
+}
+
+function mentionListKey(panel, e) {
+  const items = mentionCandidates(panel);
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    const n = Math.min(items.length, 8);
+    panel.mentionIndex = (panel.mentionIndex + (e.key === 'ArrowDown' ? 1 : n - 1)) % n;
+    drawMentionList(panel);
+    return true;
+  }
+  if (e.key === 'Enter' || e.key === 'Tab') {
+    if (items[panel.mentionIndex]) pickMention(panel, items[panel.mentionIndex]);
+    return true;
+  }
+  if (e.key === 'Escape') {
+    closeMentionList(panel);
+    return true;
+  }
+  return false;
+}
+
+// Replace what you typed after @ with the terminal's full session name.
+function pickMention(panel, target) {
+  const name = /\s/.test(target.name) ? `"${target.name}"` : target.name;
+  api.write(panel.ptyId, '\x7f'.repeat((panel.mentionFilter || '').length) + name + ' ');
+  panel.atWordStart = true;
+  closeMentionList(panel);
+  panel.term.focus();
+}
+
+// ---------- Suggesting an expert ----------
+
+// After your first message in a new terminal, the app checks the CVs itself. If one session is a strong
+// match, a small label appears in the top bar. Clicking it adds a line to your message pointing Claude
+// at that expert. The × hides it.
+async function maybeSuggestExpert(panel, s) {
+  if (panel.expertChecked || settings.autoCVs === false || !s?.firstPrompt) return;
+  if (!panel.startedAt || s.created < panel.startedAt - 5000) return; // only new sessions, not resumed ones
+  panel.expertChecked = true;
+  const openIds = panels.map((p) => p.sessionId).filter(Boolean);
+  const found = await api.suggestExpert({ sessionId: s.id, cwd: panel.cwd, text: s.firstPrompt, openIds });
+  if (!found) return;
+  const box = panel.head.querySelector('.expert');
+  const label = found.title || found.summary.replace(/^Expert (in|on)\s+/i, '') || found.id.slice(0, 8);
+  box.innerHTML = '';
+  const use = el('button', 'expert-use', `Expert: ${label.length > 40 ? label.slice(0, 40) + '…' : label}`);
+  use.title = `${found.summary}\n\nClick to point Claude at this expert session (${found.id.slice(0, 8)}).`;
+  use.addEventListener('mousedown', (e) => e.stopPropagation());
+  use.addEventListener('click', (e) => {
+    e.stopPropagation();
+    panel.term.paste(
+      `Use expert session ${found.id.slice(0, 8)} ("${label}") for context: start with its CV and the files it names, then search its conversation if you need more. `
+    );
+    box.innerHTML = '';
+    panel.term.focus();
+  });
+  const dismiss = el('button', 'expert-x', '×');
+  dismiss.title = 'Hide this suggestion';
+  dismiss.addEventListener('click', (e) => {
+    e.stopPropagation();
+    box.innerHTML = '';
+  });
+  box.append(use, dismiss);
+}
+
+// ---------- Approving from the panel you are in ----------
+
+// When another terminal stops to ask for your approval, the request appears as a small card in the
+// terminal you are working in, with the same choices. Clicking a choice answers it in that terminal,
+// exactly as if you had pressed that number there. Nothing is ever approved without your click.
+function readApproval(p) {
+  if (!p.term || !p.running) return null;
+  const b = p.term.buffer.active;
+  const rows = [];
+  for (let y = 0; y < p.term.rows; y++) rows.push(b.getLine(b.viewportY + y)?.translateToString(true) ?? '');
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const option = /^\s*(?:❯\s*)?(\d)\.\s+(.+?)\s*$/;
+    if (!option.test(rows[i]) || !/\?\s*$/.test(rows[i - countOptionsAbove(rows, i, option)] || '')) continue;
+    const firstOption = i - countOptionsAbove(rows, i, option) + 1;
+    const question = rows[firstOption - 1].trim();
+    const options = [];
+    let j = firstOption;
+    for (; j < rows.length && option.test(rows[j]); j++) {
+      const m = rows[j].match(option);
+      options.push({ n: m[1], label: m[2] });
+    }
+    // Only Claude Code's own approval prompts, not a numbered list in one of Claude's replies.
+    const footer = rows.slice(j, j + 3).join(' ');
+    if (!/^Do you want to/i.test(question) && !/Esc to cancel/i.test(footer)) return null;
+    // The details sit between the line across the panel and the question.
+    const details = [];
+    for (let j = firstOption - 2; j >= 0 && !/^─{10,}/.test(rows[j].trim()); j--) {
+      const t = rows[j].trim();
+      if (t && !/^╌{5,}/.test(t) && !/^Tip:/.test(t)) details.unshift(t);
+    }
+    return { question, options, details: details.slice(-4), key: question + details.join('|') + options.map((o) => o.label).join('|') };
+  }
+  return null;
+}
+
+function countOptionsAbove(rows, i, option) {
+  let n = 0;
+  while (i - n >= 0 && option.test(rows[i - n])) n++;
+  return n;
+}
+
+const approvalCards = new Map(); // panel -> { key, card }
+
+function scanApprovals() {
+  for (const p of panels) {
+    const req = p === focused && visiblePanels().includes(p) ? null : readApproval(p);
+    const shown = approvalCards.get(p);
+    if (!req) {
+      if (shown) {
+        shown.card.remove();
+        approvalCards.delete(p);
+      }
+      continue;
+    }
+    if (shown?.key === req.key && shown.card.isConnected && shown.host === focused) continue;
+    shown?.card.remove();
+    const card = buildApprovalCard(p, req);
+    const host = focused && focused !== p ? focused.body : document.body;
+    host.append(card);
+    approvalCards.set(p, { key: req.key, card, host: focused });
+  }
+  // Stack the cards so several requests do not overlap.
+  let offset = 0;
+  for (const { card } of approvalCards.values()) {
+    card.style.bottom = `${64 + offset}px`;
+    offset += card.offsetHeight + 8;
+  }
+}
+
+function buildApprovalCard(p, req) {
+  const card = el('div', 'approval-card');
+  const head = el('div', 'approval-head');
+  const pill = el('span', 'harness', p.harnessName || baseName(p.cwd));
+  pill.style.setProperty('--hue', harnessColour(p.harnessName || baseName(p.cwd)));
+  head.append(el('span', 'num', String(p.number)), pill, el('span', null, 'needs your approval'));
+  const go = el('button', 'link-btn', 'Go to it');
+  go.addEventListener('click', () => showPanel(p));
+  head.append(go);
+  card.append(head);
+  for (const d of req.details) card.append(el('div', 'approval-detail', d));
+  card.append(el('div', 'approval-question', req.question));
+  const choices = el('div', 'approval-choices');
+  for (const o of req.options) {
+    const short = o.label.split(' · ')[0];
+    const b = el('button', 'btn approval-choice', `${o.n}. ${short.length > 38 ? short.slice(0, 38) + '…' : short}`);
+    b.title = o.label;
+    b.addEventListener('click', () => {
+      api.write(p.ptyId, o.n); // the same as pressing that number in that terminal
+      card.remove();
+      approvalCards.delete(p);
+      setFocus(focused);
+    });
+    choices.append(b);
+  }
+  card.append(choices);
+  return card;
+}
+
+setInterval(scanApprovals, 1000);
 
 // ---------- Settings dialog ----------
 
@@ -1494,13 +1782,15 @@ function updateTitles() {
     }
     p.about = displayTitle(s);
     maybeMakeTitle(s);
+    setHarnessPill(p);
     const label = p.harnessName || baseName(p.cwd);
-    const text = p.about && p.about !== label ? `${label} · ${p.about}` : label;
+    const text = p.about && p.about !== label ? p.about : '';
     const title = p.head.querySelector('.title');
     if (title.textContent !== text) {
       title.textContent = text;
       title.title = text;
     }
+    maybeSuggestExpert(p, s);
   }
   if (renamed) saveWorkspace();
 }

@@ -347,23 +347,30 @@ function readActivity(file) {
       working = true;
       for (const c of content) {
         if (c.type !== 'tool_use') continue;
-        const call = { text: describeTool(c), background: Boolean(c.input?.run_in_background) };
+        const call = {
+          text: describeTool(c),
+          background: Boolean(c.input?.run_in_background),
+          agent: c.name === 'Agent' || c.name === 'Task',
+          description: c.input?.description || 'Subagent',
+          since: entry.timestamp ? Date.parse(entry.timestamp) : Date.now(),
+        };
         calls.set(c.id, call);
-        pending.set(c.id, call.text);
+        pending.set(c.id, call);
         last = call.text;
       }
     } else if (entry.type === 'user') {
       if (typeof content === 'string') {
         const done = content.match(/<tool-use-id>([\w-]+)<\/tool-use-id>/);
         if (done) background.delete(done[1]);
+        if (done) pending.delete(done[1]);
         else if (!content.startsWith('<')) working = true;
       } else if (Array.isArray(content)) {
         for (const c of content) {
           if (c.type === 'tool_result') {
             pending.delete(c.tool_use_id);
             const call = calls.get(c.tool_use_id);
-            if (call && (call.background || /running in (the )?background/i.test(resultText(c)))) {
-              background.set(c.tool_use_id, call.text);
+            if (call && (call.background || /running in (the )?background|async agent launched/i.test(resultText(c)))) {
+              background.set(c.tool_use_id, call);
             }
           } else if (c.type === 'text' && !c.text.startsWith('<')) {
             working = true;
@@ -372,10 +379,15 @@ function readActivity(file) {
       }
     }
   }
+  // Subagents still working: ones Claude is waiting on, and ones it started in the background.
+  const agents = [...pending.values(), ...background.values()]
+    .filter((c) => c.agent)
+    .map((c) => ({ description: c.description, since: c.since }));
   return {
     working,
-    pending: [...pending.values()].pop() || null,
-    background: [...background.values()],
+    pending: [...pending.values()].filter((c) => !c.agent).map((c) => c.text).pop() || null,
+    background: [...background.values()].filter((c) => !c.agent).map((c) => c.text),
+    agents,
     last,
   };
 }
@@ -604,6 +616,19 @@ function runCVWorker() {
 app.on('will-quit', () => cvRun?.kill());
 
 // The CVs, for ⌘K and the stack view: session id -> { summary, cv, requests, contextTokens }.
+// After your first message in a new terminal, suggest one strong expert from the same folder.
+const { rankExperts } = require('./lib/experts');
+ipcMain.handle('experts:suggest', (_e, { sessionId, cwd, text, openIds }) => {
+  try {
+    const cvs = JSON.parse(fs.readFileSync(cvsFile(), 'utf8')).sessions || {};
+    const best = rankExperts({ task: text, here: cwd, cvs, excludeIds: [sessionId, ...(openIds || [])] })[0];
+    if (!best || best.score < 0.6 || best.hits < 2) return null;
+    return { id: best.id, title: best.e.title || null, summary: best.e.summary || '', cwd: best.e.cwd };
+  } catch {
+    return null;
+  }
+});
+
 ipcMain.handle('cvs:get', () => {
   try {
     const sessions = JSON.parse(fs.readFileSync(cvsFile(), 'utf8')).sessions || {};

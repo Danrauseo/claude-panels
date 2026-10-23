@@ -9,6 +9,7 @@ const os = require('os');
 const path = require('path');
 const { execFile } = require('child_process');
 const { findSessionFile, readTranscript, searchTranscript, formatTranscript } = require('../lib/transcript');
+const { rankExperts } = require('../lib/experts');
 
 const REGISTRY = process.env.CLAUDE_PANELS_REGISTRY; // the terminals open in the app
 const CVS = process.env.CLAUDE_PANELS_CVS; // the CVs the app keeps for sessions
@@ -169,36 +170,13 @@ function costOf(id, file) {
   return { cheap, note, lastUsed, size };
 }
 
-const STOP = new Set(
-  ('the and for with that this from into have will what when your about there their them then than were been ' +
-    "some more also just make made need want please could would should can its it's our out use using new add " +
-    'work task file files code').split(' ')
-);
-
 function findExpert(task, everywhere) {
-  const words = [...new Set((String(task).toLowerCase().match(/[a-z0-9][a-z0-9._-]{2,}/g) || []).filter((w) => !STOP.has(w)))];
-  const here = process.cwd();
   const panels = loadPanels();
   const selfId = panels.find((p) => p.number === SELF)?.sessionId;
-  const tildeHere = here.startsWith(os.homedir()) ? '~' + here.slice(os.homedir().length) : here;
-  // An expert counts as local if it worked in this folder, or if its CV says it knows this folder.
-  const sameFolder = (cwd, cv = '') =>
-    cwd === here || here.startsWith(cwd + path.sep) || cwd.startsWith(here + path.sep) || cv.includes(here) || cv.includes(tildeHere);
   const openIds = new Map(panels.map((p) => [p.sessionId, p]));
-
-  const scored = [];
-  for (const [id, e] of Object.entries(loadCVs())) {
-    if (!e.cv || id === selfId || !e.cwd) continue;
-    const local = sameFolder(e.cwd, e.cv);
-    if (!everywhere && !local) continue;
-    const text = `${e.title || ''} ${e.cv} ${e.cwd}`.toLowerCase();
-    const hits = words.filter((w) => text.includes(w));
-    let score = words.length ? hits.length / words.length : 0;
-    if (local) score += 0.25;
-    if (hits.length < 2 && !(local && hits.length >= 1)) continue;
-    scored.push({ id, e, score, open: openIds.get(id) });
-  }
-  scored.sort((a, b) => b.score - a.score || b.e.updated - a.e.updated);
+  const scored = rankExperts({ task, here: process.cwd(), cvs: loadCVs(), excludeIds: [selfId], everywhere }).map(
+    (s) => ({ ...s, open: openIds.get(s.id) })
+  );
   const best = scored.filter((s) => s.score >= 0.3).slice(0, 3);
 
   if (!best.length) {

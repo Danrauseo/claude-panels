@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld('panelsApi', {
   isDir: (p) => ipcRenderer.invoke('path:isDir', p),
   makeTitle: (opts) => ipcRenderer.invoke('title:make', opts),
   getCVs: () => ipcRenderer.invoke('cvs:get'),
+  suggestExpert: (opts) => ipcRenderer.invoke('experts:suggest', opts),
   copyReply: (sessionId) => ipcRenderer.invoke('reply:copy', sessionId),
   checkUpdate: () => ipcRenderer.invoke('update:check'),
   runUpdate: (workspace, tag) => ipcRenderer.invoke('update:run', workspace, tag),
