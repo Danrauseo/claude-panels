@@ -96,7 +96,7 @@ Each terminal's top bar shows its number, a light, its harness and what the sess
 
 ## Approving from the terminal you are using
 
-When a terminal you are not looking at stops to ask for your approval, for example to run a command, a small card appears at the bottom right of the terminal you are using. It shows which terminal is asking, what it wants to do, and its choices as buttons. Click a choice to answer it without leaving your terminal, or click "Go to it" to switch to that terminal. The card goes away once the question is answered.
+When a terminal you are not looking at stops to ask for your approval, for example to run a command, a small card appears at the bottom right of the terminal you are using. It shows which terminal is asking, what it wants to do, and its choices as buttons. The same happens when Claude asks you a multiple choice question. Choices that need you to type, such as "Type something", take you to that terminal. Click a choice to answer it without leaving your terminal, or click "Go to it" to switch to that terminal. The card goes away once the question is answered.
 
 Only you can answer these. Claude in one terminal cannot approve anything for another.
 

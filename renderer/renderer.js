@@ -1496,40 +1496,53 @@ async function maybeSuggestExpert(panel, s) {
 // When another terminal stops to ask for your approval, the request appears as a small card in the
 // terminal you are working in, with the same choices. Clicking a choice answers it in that terminal,
 // exactly as if you had pressed that number there. Nothing is ever approved without your click.
+// Reads an approval or question prompt from the bottom of a terminal's screen. Every Claude Code prompt
+// ends with a line that says "Esc to cancel", for example "Esc to cancel · Tab to amend" on a
+// permission prompt, or "Enter to select · ↑/↓ to navigate · Esc to cancel" when Claude asks you a
+// question. Above that line are the numbered choices, some with a description under them, and above
+// those is the question.
 function readApproval(p) {
   if (!p.term || !p.running) return null;
   const b = p.term.buffer.active;
   const rows = [];
   for (let y = 0; y < p.term.rows; y++) rows.push(b.getLine(b.viewportY + y)?.translateToString(true) ?? '');
-  for (let i = rows.length - 1; i >= 0; i--) {
-    const option = /^\s*(?:❯\s*)?(\d)\.\s+(.+?)\s*$/;
-    if (!option.test(rows[i]) || !/\?\s*$/.test(rows[i - countOptionsAbove(rows, i, option)] || '')) continue;
-    const firstOption = i - countOptionsAbove(rows, i, option) + 1;
-    const question = rows[firstOption - 1].trim();
-    const options = [];
-    let j = firstOption;
-    for (; j < rows.length && option.test(rows[j]); j++) {
-      const m = rows[j].match(option);
-      options.push({ n: m[1], label: m[2] });
-    }
-    // Only Claude Code's own approval prompts, not a numbered list in one of Claude's replies.
-    const footer = rows.slice(j, j + 3).join(' ');
-    if (!/^Do you want to/i.test(question) && !/Esc to cancel/i.test(footer)) return null;
-    // The details sit between the line across the panel and the question.
-    const details = [];
-    for (let j = firstOption - 2; j >= 0 && !/^─{10,}/.test(rows[j].trim()); j--) {
-      const t = rows[j].trim();
-      if (t && !/^╌{5,}/.test(t) && !/^Tip:/.test(t)) details.unshift(t);
-    }
-    return { question, options, details: details.slice(-4), key: question + details.join('|') + options.map((o) => o.label).join('|') };
-  }
-  return null;
-}
 
-function countOptionsAbove(rows, i, option) {
-  let n = 0;
-  while (i - n >= 0 && option.test(rows[i - n])) n++;
-  return n;
+  // The footer has to be among the last few lines with text, so an old prompt further up is ignored.
+  // A new session in a tall terminal can have many empty lines below the prompt.
+  const filled = rows.map((r, i) => (r.trim() ? i : -1)).filter((i) => i >= 0);
+  const footer = filled.slice(-6).reverse().find((i) => /Esc to cancel/i.test(rows[i])) ?? -1;
+  if (footer < 0) return null;
+
+  const option = /^\s*(?:❯\s*)?(\d+)\.\s+(.+?)\s*$/;
+  const rule = /^\s*[─╌]{10,}/;
+  const options = [];
+  let question = '';
+  let top = -1;
+  for (let i = footer - 1; i >= Math.max(0, footer - 30); i--) {
+    const t = rows[i].trim();
+    const m = rows[i].match(option);
+    if (m) {
+      options.unshift({ n: m[1], label: m[2] });
+      continue;
+    }
+    if (!t || rule.test(rows[i])) continue;
+    // A line indented under a choice is that choice's description.
+    if (options.length && /^\s{3,}/.test(rows[i]) && !/\?\s*$/.test(t)) continue;
+    if (options.length && /\?\s*$/.test(t)) {
+      question = t;
+      top = i;
+      break;
+    }
+  }
+  if (!question || !options.length) return null;
+
+  // The details sit between the line across the panel and the question.
+  const details = [];
+  for (let j = top - 1; j >= 0 && !/^─{10,}/.test(rows[j].trim()); j--) {
+    const t = rows[j].trim();
+    if (t && !/^╌{5,}/.test(t) && !/^Tip:/.test(t)) details.unshift(t);
+  }
+  return { question, options, details: details.slice(-4), key: question + details.join('|') + options.map((o) => o.label).join('|') };
 }
 
 const approvalCards = new Map(); // panel -> { key, card }
@@ -1565,23 +1578,27 @@ function buildApprovalCard(p, req) {
   const head = el('div', 'approval-head');
   const pill = el('span', 'harness', p.harnessName || baseName(p.cwd));
   pill.style.setProperty('--hue', harnessColour(p.harnessName || baseName(p.cwd)));
-  head.append(el('span', 'num', String(p.number)), pill, el('span', null, 'needs your approval'));
+  head.append(el('span', 'num', String(p.number)), pill, el('span', null, req.options.length > 0 && /^Do you want/i.test(req.question) ? 'needs your approval' : 'is asking you'));
   const go = el('button', 'link-btn', 'Go to it');
   go.addEventListener('click', () => showPanel(p));
   head.append(go);
   card.append(head);
   for (const d of req.details) card.append(el('div', 'approval-detail', d));
-  card.append(el('div', 'approval-question', req.question));
+  // The usual "Do you want to proceed?" adds nothing, so only other questions are shown.
+  if (!/^Do you want to proceed\?$/i.test(req.question)) card.append(el('div', 'approval-question', req.question));
   const choices = el('div', 'approval-choices');
   for (const o of req.options) {
     const short = o.label.split(' · ')[0];
     const b = el('button', 'btn approval-choice', `${o.n}. ${short.length > 38 ? short.slice(0, 38) + '…' : short}`);
     b.title = o.label;
+    // Choices that need you to type, such as "Type something", take you to that terminal.
+    const needsTyping = /^(Type something|Chat about this)/i.test(o.label);
     b.addEventListener('click', () => {
       api.write(p.ptyId, o.n); // the same as pressing that number in that terminal
       card.remove();
       approvalCards.delete(p);
-      setFocus(focused);
+      if (needsTyping) showPanel(p);
+      else setFocus(focused);
     });
     choices.append(b);
   }

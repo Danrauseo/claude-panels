@@ -479,7 +479,7 @@ body > .approval-card { position: fixed; }
 .approval-head .link-btn { margin-left: auto; font-size: 11px; }
 .approval-detail { color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .approval-detail + .approval-detail { color: var(--muted); font-family: "SF Mono", Menlo, monospace; font-size: 10.5px; }
-.approval-question { display: none; }
+.approval-question { color: var(--text); font-weight: 500; margin-top: 2px; }
 .approval-choices { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
 .approval-choice {
   height: 20px;
@@ -493,3 +493,17 @@ body > .approval-card { position: fixed; }
 
 /* Harness pill at the start of each row in the ⌘K list */
 .item .row .harness { flex: none; margin-right: 8px; font-size: 10px; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---------- Scroll bars ---------- */
+
+/* Thin dark blue scroll bars for lists and dialogs, such as the ⌘K list, instead of the white system ones. */
+:root { color-scheme: dark; }
+::-webkit-scrollbar { width: 8px; height: 8px; background: transparent; }
+::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--blue-border);
+  border: 2px solid transparent;
+  border-radius: 4px;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--focus); border: 2px solid transparent; background-clip: padding-box; }
