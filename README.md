@@ -106,7 +106,7 @@ Drop files onto a terminal to add their paths to what you are typing, the same a
 
 ## Finding a terminal or resuming a past session
 
-⌘K lists your open terminals first, searchable by what they are about, their harness or their folder. Choosing one takes you to it. Below them it lists every Claude Code session saved on this computer, newest first. Type to search by title, message or folder. Press Enter to resume the session in a panel. This runs `claude --resume` in that session's folder.
+⌘K lists your open terminals first, searchable by what they are about, their harness or their folder. Each row starts with its harness name in that harness's colour. Choosing one takes you to it. Below them it lists every Claude Code session saved on this computer, newest first. Type to search by title, message or folder. Press Enter to resume the session in a panel. This runs `claude --resume` in that session's folder.
 
 ## Stack view
 
@@ -121,7 +121,7 @@ Click a card or press ⌘1 to ⌘9 to show only that harness's terminals. Press 
 
 ## Using one terminal's session from another
 
-Each terminal keeps its number while it is open, and its Claude session is named after it, for example `2-wrap`. In any terminal, type `@` at the start of a word and the app shows a short list of your other open terminals, with their harness and what they are about. Keep typing to narrow it, pick one with the arrow keys and Enter, or press Esc to close the list and use Claude Code's own `@` list for files instead. Then say what you want, and Claude picks how to get it:
+Each terminal keeps its number while it is open, and its Claude session is named after it, for example `2-wrap`. In any terminal, type `@` at the start of a word and the app shows a short list of your other open terminals, with their harness and what they are about. Keep typing to narrow it, pick one with the arrow keys and Enter. Enter only adds the name, so press Enter again when you want to send the message. Press Esc to close the list and use Claude Code's own `@` list for files instead. Then say what you want, and Claude picks how to get it:
 
 - **Ask or tell that session something**: Claude sends it a message. The other session answers from what it knows, and the reply arrives as a `› Message from @2-wrap: …` line. This uses Claude Code's built-in messaging between sessions, so the other session takes a turn to answer.
 - **Find specific details**: Claude searches that session's saved conversation with the app's `search_session` tool. This does not interrupt the other session.

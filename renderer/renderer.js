@@ -116,6 +116,11 @@ class KeyList {
       const row = el('div', 'item' + (entry.when ? ' two-line' : ''));
       if (entry.when) {
         const top = el('div', 'row');
+        if (entry.harness) {
+          const pill = el('span', 'harness', entry.harness);
+          pill.style.setProperty('--hue', harnessColour(entry.harness));
+          top.append(pill);
+        }
         top.append(el('span', 'label', entry.label), el('span', 'when', entry.when));
         row.append(top, el('div', 'detail', entry.detail || ''));
       } else {
@@ -518,8 +523,9 @@ function buildSearchEntries(query) {
     for (const p of openPanels) {
       entries.push({
         label: `${p.number} · ${p.about || p.title}`,
+        harness: p.harnessName || baseName(p.cwd),
         when: p.running ? 'open' : 'ended',
-        detail: `${groupOf(p).name} · ${tildePath(p.cwd)}`,
+        detail: tildePath(p.cwd),
         title: p.cwd,
         run: () => {
           searchDialog.close();
@@ -539,6 +545,7 @@ function buildSearchEntries(query) {
   if (!entries.length) return [{ note: 'No terminals or sessions match.' }];
   return entries.concat(matches.slice(0, 150).map((s) => ({
     label: displayTitle(s),
+    harness: harnessLabelFor(s.cwd),
     when: timeAgo(s.updated),
     detail:
       (cvs[s.id]?.summary ? `${cvs[s.id].summary}  ·  ` : '') +
@@ -689,8 +696,18 @@ async function launch(panel, dir, { resumeId = null, title = null, harnessName =
     // Leave app shortcuts such as ⌘N, ⌘K and ⌘W to the app menu.
     if (e.metaKey && !['c', 'v', 'a'].includes(e.key)) return false;
 
-    // While the Panels @ list is open, the arrow keys, Enter, Tab and Esc work the list.
-    if (panel.mentionList && e.type === 'keydown' && mentionListKey(panel, e)) return false;
+    // While the Panels @ list is open, the arrow keys, Enter, Tab and Esc work the list. Pressing Enter
+    // also sends a keypress event after the list has closed, so that is dropped too. Otherwise it would
+    // send the message.
+    if (panel.mentionList && e.type === 'keydown' && mentionListKey(panel, e)) {
+      e.preventDefault();
+      panel.dropKeypress = true;
+      return false;
+    }
+    if (panel.dropKeypress) {
+      if (e.type === 'keypress') return (panel.dropKeypress = false);
+      if (e.type === 'keydown') panel.dropKeypress = false;
+    }
 
     return true;
   });
@@ -915,6 +932,13 @@ function groupOf(panel) {
   }
   if (harness) return { key: harness.path, name: '/' + slug(harness.name), path: harness.path };
   return { key: panel.cwd, name: baseName(panel.cwd), path: panel.cwd };
+}
+
+// The harness name shown for a past session: the saved harness its folder is in, or else the folder's name.
+function harnessLabelFor(cwd) {
+  if (!cwd) return '';
+  const g = groupOf({ cwd });
+  return g.name.replace(/^\//, '');
 }
 
 function openGroups() {

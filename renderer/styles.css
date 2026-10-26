@@ -378,7 +378,7 @@ code { font-family: "SF Mono", Menlo, monospace; font-size: 11px; color: var(--b
 
 /* ---------- Which panel and harness you are in ---------- */
 
-.panel-head .harness, .mention-row .harness, .approval-head .harness {
+.panel-head .harness, .mention-row .harness, .approval-head .harness, .item .row .harness {
   font: 600 11px "SF Mono", Menlo, monospace;
   padding: 1px 7px;
   border-radius: 9px;
@@ -490,3 +490,6 @@ body > .approval-card { position: fixed; }
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* Harness pill at the start of each row in the ⌘K list */
+.item .row .harness { flex: none; margin-right: 8px; font-size: 10px; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
