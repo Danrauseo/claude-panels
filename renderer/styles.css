@@ -479,7 +479,16 @@ body > .approval-card { position: fixed; }
 .approval-head .link-btn { margin-left: auto; font-size: 11px; }
 .approval-detail { color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .approval-detail + .approval-detail { color: var(--muted); font-family: "SF Mono", Menlo, monospace; font-size: 10.5px; }
-.approval-question { color: var(--text); font-weight: 500; margin-top: 2px; }
+.approval-question {
+  color: var(--text);
+  font-weight: 500;
+  margin-top: 2px;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.approval-more { color: var(--muted); margin-top: 5px; }
 .approval-choices { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
 .approval-choice {
   height: 20px;
@@ -507,3 +516,22 @@ body > .approval-card { position: fixed; }
   background-clip: padding-box;
 }
 ::-webkit-scrollbar-thumb:hover { background: var(--focus); border: 2px solid transparent; background-clip: padding-box; }
+
+/* ---------- Notice when Claude opens a terminal ---------- */
+
+.opened-notice {
+  position: fixed;
+  top: 78px; /* below the top bars, so it does not cover a close button */
+  right: 14px;
+  width: min(360px, calc(100% - 28px));
+  background: #121a2ef0;
+  border: 1px solid var(--blue-border);
+  border-radius: 7px;
+  padding: 7px 9px;
+  z-index: 8;
+  box-shadow: 0 6px 22px #0009;
+  font-size: 11.5px;
+}
+.opened-notice .approval-head { color: var(--blue-text); }
+.opened-notice .link-btn + .link-btn { margin-left: 4px; }
+.opened-notice .approval-question { font-weight: 400; color: var(--muted); }

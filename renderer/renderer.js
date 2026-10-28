@@ -291,11 +291,14 @@ function sessionName(panel) {
   return `${panel.number}-${label}`.slice(0, 40);
 }
 
-function addPanel(wantedNumber) {
-  if (view === 'stack') showGrid();
-  zoomed = null;
-  navStack = [];
-  family = null;
+// A panel opened in the background, by Claude in another terminal, leaves the view and focus as they are.
+function addPanel(wantedNumber, { background = false } = {}) {
+  if (!background) {
+    if (view === 'stack') showGrid();
+    zoomed = null;
+    navStack = [];
+    family = null;
+  }
   const panel = { ptyId: null, term: null, fit: null, cwd: null, running: false, sessionId: null, harnessName: null };
   panel.number = freeNumber(wantedNumber);
 
@@ -350,7 +353,7 @@ function addPanel(wantedNumber) {
   }
   applyLayout();
   showPicker(panel);
-  setFocus(panel);
+  if (!background) setFocus(panel);
   return panel;
 }
 
@@ -646,7 +649,7 @@ function registerFileLinks(term) {
   });
 }
 
-async function launch(panel, dir, { resumeId = null, title = null, harnessName = null, name = null } = {}) {
+async function launch(panel, dir, { resumeId = null, title = null, harnessName = null, name = null, firstMessage = null } = {}) {
   if (panel.launching || panel.ptyId !== null) return;
   if (!(await api.folderExists(dir))) {
     panel.picker?.keyList.showMessage(`That folder does not exist: ${dir}`);
@@ -725,6 +728,7 @@ async function launch(panel, dir, { resumeId = null, title = null, harnessName =
       resumeId,
       name: panel.name,
       number: panel.number,
+      firstMessage,
     });
     panel.ptyId = started.id;
     panel.sessionId = started.sessionId;
@@ -1122,6 +1126,7 @@ function currentWorkspace() {
       sessionId: p.sessionId,
       title: p.title,
       harnessName: p.harnessName,
+      openedBy: p.openedBy || null,
     }));
 }
 
@@ -1513,36 +1518,43 @@ function readApproval(p) {
   const footer = filled.slice(-6).reverse().find((i) => /Esc to cancel/i.test(rows[i])) ?? -1;
   if (footer < 0) return null;
 
-  const option = /^\s*(?:❯\s*)?(\d+)\.\s+(.+?)\s*$/;
+  // A choice can start with the selection mark, or with ↑ or ↓ when the list scrolls in a small terminal.
+  const option = /^\s*(?:[❯↑↓]\s*)?(\d+)\.\s+(.+?)\s*$/;
   const rule = /^\s*[─╌]{10,}/;
   const options = [];
-  let question = '';
-  let top = -1;
-  for (let i = footer - 1; i >= Math.max(0, footer - 30); i--) {
-    const t = rows[i].trim();
+  let i = footer - 1;
+  for (; i >= 0; i--) {
     const m = rows[i].match(option);
     if (m) {
       options.unshift({ n: m[1], label: m[2] });
       continue;
     }
-    if (!t || rule.test(rows[i])) continue;
-    // A line indented under a choice is that choice's description.
-    if (options.length && /^\s{3,}/.test(rows[i]) && !/\?\s*$/.test(t)) continue;
-    if (options.length && /\?\s*$/.test(t)) {
-      question = t;
-      top = i;
-      break;
-    }
+    if (!rows[i].trim() || rule.test(rows[i])) continue;
+    // A line indented under a choice is that choice's description, or the rest of a long choice.
+    if (options.length && /^\s{3,}\S/.test(rows[i])) continue;
+    break;
   }
-  if (!question || !options.length) return null;
+  if (!options.length) return null;
 
+  // The question is the block of lines just above the choices. It can run over several lines and does not
+  // always end with a question mark. In a small terminal its first lines may be cut off.
+  const question = [];
+  for (; i >= 0 && rows[i].trim() && !rule.test(rows[i]); i--) {
+    // Long questions are drawn with a border down the side, which is not part of the text.
+    question.unshift(rows[i].replace(/[│┃]/g, ' ').trim().replace(/\s+/g, ' '));
+  }
   // The details sit between the line across the panel and the question.
   const details = [];
-  for (let j = top - 1; j >= 0 && !/^─{10,}/.test(rows[j].trim()); j--) {
+  for (let j = i - 1; j >= 0 && !/^─{10,}/.test(rows[j].trim()); j--) {
     const t = rows[j].trim();
     if (t && !/^╌{5,}/.test(t) && !/^Tip:/.test(t)) details.unshift(t);
   }
-  return { question, options, details: details.slice(-4), key: question + details.join('|') + options.map((o) => o.label).join('|') };
+  return {
+    question: question.join(' '),
+    options,
+    details: details.slice(-4),
+    key: question.join(' ') + details.join('|') + options.map((o) => o.label).join('|'),
+  };
 }
 
 const approvalCards = new Map(); // panel -> { key, card }
@@ -1585,7 +1597,11 @@ function buildApprovalCard(p, req) {
   card.append(head);
   for (const d of req.details) card.append(el('div', 'approval-detail', d));
   // The usual "Do you want to proceed?" adds nothing, so only other questions are shown.
-  if (!/^Do you want to proceed\?$/i.test(req.question)) card.append(el('div', 'approval-question', req.question));
+  if (!/^Do you want to proceed\?$/i.test(req.question)) {
+    const q = el('div', 'approval-question', req.question);
+    q.title = req.question;
+    card.append(q);
+  }
   const choices = el('div', 'approval-choices');
   for (const o of req.options) {
     const short = o.label.split(' · ')[0];
@@ -1603,6 +1619,9 @@ function buildApprovalCard(p, req) {
     choices.append(b);
   }
   card.append(choices);
+  // A small terminal can scroll some choices out of sight, which leaves gaps in the numbers.
+  const hidden = req.options.some((o, i) => Number(o.n) !== (i ? Number(req.options[i - 1].n) + 1 : 1));
+  if (hidden) card.append(el('div', 'approval-more', 'Some choices are hidden because the terminal is small. Click Go to it to see them all.'));
   return card;
 }
 
@@ -1846,3 +1865,57 @@ function updateTitles() {
     restoreWorkspace();
   }
 })();
+
+// ---------- Terminals opened by Claude ----------
+
+// Claude in one terminal can ask the app, through the panels open_terminal tool, to open a new terminal
+// in a harness and start Claude there with a task. The new terminal opens without taking over the view,
+// and a small notice says which terminal opened it.
+api.onOpenRequest(async (id, req) => {
+  try {
+    const from = panels.find((p) => p.number === req.from);
+    if (!from) throw new Error(`Terminal ${req.from} is not open.`);
+    const panel = addPanel(undefined, { background: true });
+    panel.openedBy = from.number;
+    const firstMessage =
+      `Terminal ${from.number} (${from.name}) opened this terminal and asked for help with the task below. ` +
+      `When you have finished, send ${from.name} a short report with SendMessage, then tell the user here what you did.\n\n` +
+      `Task from terminal ${from.number}:\n${req.task}`;
+    await launch(panel, req.folder, {
+      title: req.harnessName || baseName(req.folder),
+      harnessName: req.harnessName,
+      firstMessage,
+    });
+    if (panel.ptyId === null) throw new Error('The new terminal could not start Claude.');
+    showOpenedNotice(from, panel, req.task);
+    api.openResult(id, { number: panel.number, name: panel.name, folder: req.folder });
+  } catch (err) {
+    api.openResult(id, { error: err.message });
+  }
+});
+
+function showOpenedNotice(from, panel, task) {
+  const box = el('div', 'opened-notice');
+  const head = el('div', 'approval-head');
+  const pill = (p) => {
+    const label = p.harnessName || baseName(p.cwd);
+    const x = el('span', 'harness', label);
+    x.style.setProperty('--hue', harnessColour(label));
+    return x;
+  };
+  head.append(el('span', 'num', String(from.number)), pill(from), el('span', null, 'opened'), el('span', 'num', String(panel.number)), pill(panel));
+  const go = el('button', 'link-btn', 'Go to it');
+  go.addEventListener('click', () => {
+    box.remove();
+    showPanel(panel);
+  });
+  const close = el('button', 'link-btn', '×');
+  close.title = 'Dismiss';
+  close.addEventListener('click', () => box.remove());
+  head.append(go, close);
+  const text = el('div', 'approval-question', task);
+  text.title = task;
+  box.append(head, text);
+  document.body.append(box);
+  setTimeout(() => box.remove(), 30000);
+}

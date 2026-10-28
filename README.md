@@ -98,7 +98,21 @@ Each terminal's top bar shows its number, a light, its harness and what the sess
 
 When a terminal you are not looking at stops to ask for your approval, for example to run a command, a small card appears at the bottom right of the terminal you are using. It shows which terminal is asking, what it wants to do, and its choices as buttons. The same happens when Claude asks you a multiple choice question. Choices that need you to type, such as "Type something", take you to that terminal. Click a choice to answer it without leaving your terminal, or click "Go to it" to switch to that terminal. The card goes away once the question is answered.
 
+In a small terminal, Claude Code may scroll some choices out of sight. The card then shows the choices it can see and says that the rest are in the terminal.
+
 Only you can answer these. Claude in one terminal cannot approve anything for another.
+
+## Terminals that open terminals
+
+Claude in one terminal can open a new terminal when part of its work belongs in another harness or folder, or when a separate piece of work can run alongside its own. It uses the app's `open_terminal` tool, after checking where it can run with `list_harnesses`. The new terminal starts Claude in that harness, and its first message is the task, starting with which terminal asked for it. When it has finished, it sends the terminal that opened it a short report.
+
+The new terminal opens without changing what you are looking at, even when one terminal fills the window. A small notice at the top right says which terminal opened it, with a **Go to it** button.
+
+There are limits so terminals cannot keep opening each other:
+
+- A terminal opened this way cannot open more terminals.
+- At most 4 terminals can be opened this way in any ten minutes.
+- No more are opened once 12 terminals are open.
 
 ## Dragging in files
 

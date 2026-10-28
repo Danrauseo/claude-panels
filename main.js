@@ -5,6 +5,7 @@ const os = require('os');
 const pty = require('node-pty');
 const crypto = require('crypto');
 const { execFile, spawn } = require('child_process');
+const http = require('http');
 const { describeTool, resultText } = require('./lib/transcript');
 
 // A separate settings folder can be set for testing, so a test copy never touches the installed app's settings.
@@ -106,7 +107,12 @@ function panelsPrompt(number, name) {
     'It answers from what it knows, but it has to take a turn to do so.\n' +
     "- To find specific details in that session's conversation without interrupting it, use the panels search_session tool.\n" +
     '- When the user wants all of that context, use the panels read_session tool.\n' +
-    'Use the panels list_panels tool if you are not sure which terminal the user means.';
+    'Use the panels list_panels tool if you are not sure which terminal the user means.\n\n' +
+    'You can also open a new terminal with the panels open_terminal tool. It starts a new Claude session in the ' +
+    'harness or folder you choose and gives it your task, and that session reports back to you with SendMessage. ' +
+    'Use it when part of the work belongs in a different harness or folder, or when a separate piece of work can ' +
+    'run alongside yours. Do not use it for small tasks you can do yourself. Call list_harnesses first to choose ' +
+    'where it should run, and tell the user which terminal you opened and why.';
   if (settings.autoCVs !== false) {
     text +=
       '\n\nThe app keeps a short CV for past and present sessions. When you start a substantial new task, call the ' +
@@ -119,7 +125,7 @@ function panelsPrompt(number, name) {
   return text;
 }
 
-function startTerminal({ cwd, cols, rows, resumeId, name, number }) {
+function startTerminal({ cwd, cols, rows, resumeId, name, number, firstMessage }) {
   // New sessions get an id chosen here, so the app knows which saved session each panel is running.
   const sessionId = resumeId || crypto.randomUUID();
   if (!fs.existsSync(cwd)) throw new Error(`Folder not found: ${cwd}`);
@@ -141,6 +147,7 @@ function startTerminal({ cwd, cols, rows, resumeId, name, number }) {
           CLAUDE_PANELS_SELF: String(number),
           CLAUDE_PANELS_CVS: cvsFile(),
           CLAUDE_PANELS_CLAUDE: settings.claudeCommand || 'claude',
+          ...(control ? { CLAUDE_PANELS_CONTROL: control.url, CLAUDE_PANELS_TOKEN: control.token } : {}),
         },
       },
     },
@@ -156,6 +163,8 @@ function startTerminal({ cwd, cols, rows, resumeId, name, number }) {
     claudeLine += ` --resume ${resumeId}`;
   } else {
     claudeLine += ` --session-id ${sessionId}`;
+    // A terminal opened by another terminal starts with that terminal's task as its first message.
+    if (firstMessage) claudeLine += ' "$CLAUDE_PANELS_FIRST"';
   }
 
   // Run Claude first. When Claude exits, leave the user in a normal shell in the same folder.
@@ -172,6 +181,7 @@ function startTerminal({ cwd, cols, rows, resumeId, name, number }) {
     CLAUDE_PANELS_PROMPT: prompt,
     CLAUDE_PANELS_NAME: name,
     CLAUDE_PANELS_MCP: JSON.stringify(mcpConfig),
+    ...(firstMessage && !resumeId ? { CLAUDE_PANELS_FIRST: String(firstMessage).slice(0, 8000) } : {}),
   };
 
   const proc = pty.spawn(userShell, ['-l', '-i', '-c', script], {
@@ -195,6 +205,115 @@ function startTerminal({ cwd, cols, rows, resumeId, name, number }) {
 }
 
 ipcMain.handle('pty:start', (_e, opts) => startTerminal(opts));
+
+// ---------- Terminals that Claude opens ----------
+
+// Claude in one terminal can open a new terminal for a task through the panels tool server. The tool
+// server reaches the app through a small web server that only listens on this Mac and needs a secret
+// that only the app's own terminals are given. Limits stop terminals from opening terminals without end.
+const MAX_PANELS = 12; // no new terminals once this many are open
+const MAX_OPENS = 4; // at most this many opened by Claude ...
+const OPEN_WINDOW_MS = 10 * 60 * 1000; // ... in any ten minutes
+let control = null; // { url, token } once the server is listening
+const openTimes = [];
+const openWaiting = new Map(); // request id -> resolve function
+
+function openPanelsList() {
+  try {
+    return JSON.parse(fs.readFileSync(registryFile(), 'utf8')).panels || [];
+  } catch {
+    return [];
+  }
+}
+
+function placesForClaude() {
+  const open = openPanelsList();
+  return {
+    harnesses: settings.harnesses.map((h) => ({ name: h.name, folder: h.path })),
+    openTerminals: open.map((p) => ({ number: p.number, name: p.name, folder: p.cwd })),
+    recentFolders: settings.recentLocations.filter((d) => fs.existsSync(d)),
+  };
+}
+
+async function openForClaude({ from, task, harness, folder }) {
+  task = String(task || '').trim();
+  if (!task) throw new Error('Give the new terminal a task.');
+  if (task.length > 6000) throw new Error('The task is too long. Keep it under 6,000 characters.');
+  const open = openPanelsList();
+  const requester = open.find((p) => p.number === Number(from));
+  if (!requester) throw new Error('Only a terminal that is open in Claude Panels can open another terminal.');
+  if (requester.openedBy) {
+    throw new Error(
+      `This terminal was opened by terminal ${requester.openedBy}, so it cannot open more terminals. ` +
+        'Ask the user, or tell the terminal that opened you, instead.'
+    );
+  }
+  if (open.length >= MAX_PANELS) throw new Error(`${open.length} terminals are already open, which is the most allowed.`);
+  while (openTimes.length && Date.now() - openTimes[0] > OPEN_WINDOW_MS) openTimes.shift();
+  if (openTimes.length >= MAX_OPENS) {
+    throw new Error(`${MAX_OPENS} terminals were opened in the last ten minutes, which is the most allowed. Ask the user first.`);
+  }
+
+  // Work out the folder from a saved harness name or a folder path.
+  let dir = null;
+  let harnessName = null;
+  if (harness) {
+    const want = String(harness).replace(/^\//, '').toLowerCase();
+    const h = settings.harnesses.find((x) => x.name.toLowerCase() === want);
+    if (h) {
+      dir = h.path;
+      harnessName = h.name;
+    } else if (!folder) {
+      throw new Error(`There is no harness called "${harness}". Call list_harnesses to see the harnesses and folders.`);
+    }
+  }
+  if (!dir) {
+    if (!folder) throw new Error('Choose a harness or a folder. Call list_harnesses to see them.');
+    dir = path.resolve(String(folder).replace(/^~(?=$|\/)/, os.homedir()));
+    if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) throw new Error(`That folder does not exist: ${dir}`);
+  }
+  if (!win || win.isDestroyed()) throw new Error('The Claude Panels window is not open.');
+
+  openTimes.push(Date.now());
+  const id = crypto.randomUUID();
+  const result = await new Promise((resolve) => {
+    openWaiting.set(id, resolve);
+    win.webContents.send('panels:open-request', id, { from: requester.number, folder: dir, harnessName, task });
+    setTimeout(() => resolve({ error: 'The app did not open the terminal in time.' }), 30000);
+  });
+  openWaiting.delete(id);
+  if (result.error) throw new Error(result.error);
+  return result;
+}
+
+ipcMain.on('panels:open-result', (_e, id, result) => openWaiting.get(id)?.(result || {}));
+
+function startControlServer() {
+  const token = crypto.randomBytes(24).toString('hex');
+  const server = http.createServer(async (req, res) => {
+    const reply = (code, body) => {
+      res.writeHead(code, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(body));
+    };
+    if (req.headers.authorization !== `Bearer ${token}`) return reply(403, { error: 'Not allowed.' });
+    let body = '';
+    for await (const chunk of req) {
+      body += chunk;
+      if (body.length > 20000) return reply(413, { error: 'The request is too long.' });
+    }
+    try {
+      const args = body ? JSON.parse(body) : {};
+      if (req.url === '/places') return reply(200, placesForClaude());
+      if (req.url === '/open') return reply(200, await openForClaude(args));
+      reply(404, { error: 'Unknown request.' });
+    } catch (err) {
+      reply(400, { error: err.message });
+    }
+  });
+  server.listen(0, '127.0.0.1', () => {
+    control = { url: `http://127.0.0.1:${server.address().port}`, token };
+  });
+}
 ipcMain.on('pty:write', (_e, id, data) => terminals.get(id)?.write(data));
 ipcMain.on('pty:resize', (_e, id, cols, rows) => {
   try {
@@ -892,6 +1011,7 @@ function createWindow() {
 app.whenReady().then(() => {
   settings = loadSettings();
   writeRegistry([]); // nothing is open yet
+  startControlServer();
   buildMenu();
   createWindow();
   // Look for updates shortly after starting, then every six hours.

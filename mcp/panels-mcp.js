@@ -3,6 +3,7 @@
 // - find expert sessions for a task, from the CVs the app keeps for past and present sessions
 // - search or read another session's conversation, which costs almost nothing
 // - ask an expert session a question, checking with the user first when that would be costly
+// - open a new terminal in a harness and start a Claude session there with a task
 // Claude Code talks to it over stdin and stdout, one JSON-RPC message per line.
 const fs = require('fs');
 const os = require('os');
@@ -14,6 +15,8 @@ const { rankExperts } = require('../lib/experts');
 const REGISTRY = process.env.CLAUDE_PANELS_REGISTRY; // the terminals open in the app
 const CVS = process.env.CLAUDE_PANELS_CVS; // the CVs the app keeps for sessions
 const SELF = Number(process.env.CLAUDE_PANELS_SELF) || null;
+const CONTROL = process.env.CLAUDE_PANELS_CONTROL; // the app's local address for opening terminals
+const TOKEN = process.env.CLAUDE_PANELS_TOKEN;
 const CLAUDE = (process.env.CLAUDE_PANELS_CLAUDE || 'claude').split(' ')[0];
 const INLINE_LIMIT = 30000; // longer conversations are saved to a file for Claude to read
 const CHEAP_TOKENS = 40000; // a conversation smaller than this is cheap to ask at any time
@@ -84,6 +87,36 @@ const TOOLS = [
       'List the terminals open in Claude Panels: number, session name, folder and title. ' +
       'Use it to work out which terminal the user means.',
     inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'list_harnesses',
+    description:
+      "List where a new terminal can run: the user's saved harnesses, the folders the open terminals are using, " +
+      'and recently used folders. Call it before open_terminal.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'open_terminal',
+    description:
+      'Open a new terminal in Claude Panels and start a new Claude session in it, in the harness or folder you ' +
+      'choose, with your task as its first message. The new session is told which terminal opened it, and it ' +
+      'reports back to you with SendMessage when it has finished. Use it when part of the work belongs in a ' +
+      'different harness or folder, or when a separate piece of work can run alongside yours. Do not use it for ' +
+      'small tasks you can do yourself. A terminal opened this way cannot open more terminals, and the app limits ' +
+      'how many can be opened. Tell the user which terminal you opened and why.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        task: {
+          type: 'string',
+          description:
+            'The full task for the new session, with all the context it needs, because it cannot see your conversation.',
+        },
+        harness: { type: 'string', description: 'The name of a saved harness from list_harnesses.' },
+        folder: { type: 'string', description: 'A folder path, if the work does not belong to a saved harness.' },
+      },
+      required: ['task'],
+    },
   },
 ];
 
@@ -265,8 +298,41 @@ async function askExpert(args) {
   return `Answer from ${label}:\n\n${answer}`;
 }
 
+// Asks the app itself to do something, through its local address.
+async function askApp(route, body) {
+  if (!CONTROL || !TOKEN) throw new Error('This terminal was started before the app could open terminals. Restart it to use this.');
+  const res = await fetch(CONTROL + route, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body || {}),
+    signal: AbortSignal.timeout(40000),
+  });
+  const data = await res.json();
+  if (!res.ok || data.error) throw new Error(data.error || `The app answered with an error (${res.status}).`);
+  return data;
+}
+
+async function listHarnesses() {
+  const d = await askApp('/places');
+  const lines = [];
+  lines.push('Saved harnesses:', ...(d.harnesses.length ? d.harnesses.map((h) => `- ${h.name}: ${h.folder}`) : ['- none']));
+  lines.push('', 'Folders the open terminals are using:', ...d.openTerminals.map((p) => `- terminal ${p.number} (${p.name}): ${p.folder}`));
+  lines.push('', 'Recently used folders:', ...d.recentFolders.map((f) => `- ${f}`));
+  return lines.join('\n');
+}
+
+async function openTerminal(args) {
+  const r = await askApp('/open', { from: SELF, task: args.task, harness: args.harness, folder: args.folder });
+  return (
+    `Opened terminal ${r.number} (${r.name}) in ${r.folder}. It has started on the task and will send you a report ` +
+    `with SendMessage when it has finished. Tell the user you opened terminal ${r.number} and why.`
+  );
+}
+
 async function callTool(name, args) {
   if (name === 'list_panels') return loadPanels().map(describePanel).join('\n') || 'No terminals are open.';
+  if (name === 'list_harnesses') return listHarnesses();
+  if (name === 'open_terminal') return openTerminal(args);
   if (name === 'find_expert') return findExpert(args.task || '', Boolean(args.everywhere));
   if (name === 'ask_expert') return askExpert(args);
 

@@ -29,4 +29,6 @@ contextBridge.exposeInMainWorld('panelsApi', {
   onUpdateProgress: (fn) => ipcRenderer.on('update:progress', (_e, text) => fn(text)),
 
   onMenu: (name, fn) => ipcRenderer.on(`menu:${name}`, fn),
+  onOpenRequest: (fn) => ipcRenderer.on('panels:open-request', (_e, id, req) => fn(id, req)),
+  openResult: (id, result) => ipcRenderer.send('panels:open-result', id, result),
 });
