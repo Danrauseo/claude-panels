@@ -112,7 +112,13 @@ function panelsPrompt(number, name) {
     'harness or folder you choose and gives it your task, and that session reports back to you with SendMessage. ' +
     'Use it when part of the work belongs in a different harness or folder, or when a separate piece of work can ' +
     'run alongside yours. Do not use it for small tasks you can do yourself. Call list_harnesses first to choose ' +
-    'where it should run, and tell the user which terminal you opened and why.';
+    'where it should run, and tell the user which terminal you opened and why.\n\n' +
+    'The user often works in another terminal while you work, and the app shows your AskUserQuestion questions ' +
+    'there as a card they can answer with one click. Plain questions in your replies do not appear there. So ' +
+    'whenever you need the user to approve something, confirm a step or choose between options before you carry ' +
+    'on, ask with the AskUserQuestion tool instead of ending your reply with a question. This includes every ' +
+    'confirmation that this folder\'s instructions require. Put the recommended choice first, and keep each ' +
+    "choice's label short. Questions that only need a free-text answer can still go in your reply.";
   if (settings.autoCVs !== false) {
     text +=
       '\n\nThe app keeps a short CV for past and present sessions. When you start a substantial new task, call the ' +
