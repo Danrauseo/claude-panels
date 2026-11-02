@@ -16,7 +16,11 @@ You need macOS 13 or newer, Node.js 18 or newer, Apple's command line tools, and
 
 ### Signing
 
-The app is built and signed on your own Mac, so macOS opens it without warnings. `npm run create-cert` makes a "Claude Panels Signing" certificate on your Mac, and macOS asks for your password once to trust it. Without a certificate, the app gets a basic (ad-hoc) signature, which also works on that Mac.
+The app is built and signed on your own Mac, so macOS opens it without warnings. The first build makes a "Claude Panels Signing" certificate on your Mac, and macOS asks for your password once to trust it. You can also make it yourself with `npm run create-cert`.
+
+The certificate matters because macOS remembers the permissions you give the app, such as "Claude Panels would like to access data from other apps", by its certificate. Without one, every update counts as a new app and macOS asks again. If you cancel the password prompt, or set `CLAUDE_PANELS_NO_CERT=1`, the app gets a basic (ad-hoc) signature instead.
+
+macOS asks about data from other apps when something running in a terminal, such as Claude Code or your shell, reads another app's files. Click Allow if you want those reads to work.
 
 To sign with a certificate you already have, put its name in `build/signing-identity.local` or in the `CLAUDE_PANELS_SIGNING_IDENTITY` environment variable.
 

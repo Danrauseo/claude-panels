@@ -865,7 +865,7 @@ ipcMain.handle('update:run', async (_e, workspace, tag) => {
       { CP_TAG: tag }
     );
     await runStep('Installing the parts the app needs…', 'npm install && (git checkout -- package-lock.json 2>/dev/null; true)');
-    await runStep('Building and signing the app. This takes a few minutes…', 'npm run dist');
+    await runStep('Building and signing the app. This takes a few minutes, and the first time macOS asks for your password to set up signing…', 'npm run dist');
 
     if (!app.isPackaged) {
       send('update:progress', 'Built. A test copy does not reinstall itself.');

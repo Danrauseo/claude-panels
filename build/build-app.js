@@ -35,7 +35,15 @@ function chooseIdentity() {
   return '-'; // ad-hoc
 }
 
-const identity = chooseIdentity();
+// Without a certificate every build counts as a new app, so macOS forgets the permissions the user
+// gave it and asks again after each update. Make one, unless CLAUDE_PANELS_NO_CERT=1 is set.
+let identity = chooseIdentity();
+if (identity === '-' && process.env.CLAUDE_PANELS_NO_CERT !== '1') {
+  console.log('Setting up a signing certificate, so macOS remembers the permissions you give the app.');
+  const made = spawnSync('bash', [path.join(__dirname, 'create-signing-cert.sh')], { stdio: 'inherit' });
+  if (made.status === 0) identity = chooseIdentity();
+  else console.warn('The certificate could not be set up, so this build gets an ad-hoc signature.');
+}
 const arch = process.arch === 'arm64' ? 'arm64' : 'x64';
 console.log(
   identity === '-'
