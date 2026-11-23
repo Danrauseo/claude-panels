@@ -311,6 +311,8 @@ code { font-family: "SF Mono", Menlo, monospace; font-size: 11px; color: var(--a
 .harness-row { display: flex; gap: 10px; align-items: baseline; padding: 3px 0; }
 .harness-row .label { font-family: "SF Mono", Menlo, monospace; color: var(--accent-text); }
 .harness-row .detail { color: var(--muted); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.harness-code { display: flex; align-items: center; gap: 5px; color: var(--muted); font-size: 12px; white-space: nowrap; cursor: pointer; }
+.harness-code input { margin: 0; }
 .harness-add { display: flex; gap: 6px; align-items: center; }
 .harness-add input { width: 140px; }
 
@@ -467,6 +469,11 @@ code { font-family: "SF Mono", Menlo, monospace; font-size: 11px; color: var(--a
   flex: none;
 }
 .panel-head .harness:empty { display: none; }
+.panel-head .code-badge {
+  font-size: 10.5px; color: var(--muted); border: 1px solid var(--border-strong); border-radius: 5px;
+  padding: 0 5px; line-height: 16px; white-space: nowrap; flex: none;
+}
+.panel-head .code-badge:empty { display: none; }
 .panel-head .title { font-weight: 500; }
 .panel:not(.focused) .panel-head { opacity: 0.7; }
 .panel:not(.focused) .panel-head:hover { opacity: 0.95; }

@@ -27,6 +27,7 @@ const pendingData = new Map(); // output that arrives before a panel knows its i
 let focused = null;
 let view = 'grid'; // 'grid' shows terminals, 'stack' shows one card per open harness
 let filterKey = null; // when set, only terminals in this harness are shown
+const reportWaiters = new Set(); // wait_for_report checks to run when a report comes in or a terminal changes
 let zoomed = null; // when set, this one panel fills the window
 // Moving between mentioned sessions. Each level remembers the panel you came from (the mother),
 // the sessions it mentioned (its children), which child is showing, and what was showing before.
@@ -336,6 +337,7 @@ function addPanel(wantedNumber, { quiet = false, inBackground = false } = {}) {
     el('span', 'num'),
     el('span', 'own-light'),
     el('span', 'harness'),
+    el('span', 'code-badge'),
     el('span', 'title', 'New terminal'),
     el('span', 'path'),
     el('span', 'agents'),
@@ -550,8 +552,9 @@ async function addHarnessFromPicker(panel, name) {
 }
 
 async function addHarness(name, dir) {
-  const others = settings.harnesses.filter((h) => slug(h.name) !== slug(name));
-  await saveSettings({ harnesses: [...others, { name: slug(name), path: dir }] });
+  const old = settings.harnesses.find((h) => slug(h.name) === slug(name));
+  const others = settings.harnesses.filter((h) => h !== old);
+  await saveSettings({ harnesses: [...others, { name: slug(name), path: dir, ...(old?.codeMode ? { codeMode: true } : {}) }] });
 }
 
 // ---------- Session search (⌘K) ----------
@@ -772,6 +775,8 @@ async function launch(panel, dir, { resumeId = null, title = null, harnessName =
   try {
     // Keep a name the user chose with /rename. Otherwise name the session after its panel.
     panel.name = name && !/^\d+-[\w-]+$/.test(name) ? name : sessionName(panel);
+    // A new session uses its harness's Code Mode setting. A resumed one keeps what it started with.
+    const harness = harnessName && settings.harnesses.find((h) => slug(h.name) === slug(harnessName));
     const started = await api.startTerminal({
       cwd: dir,
       cols: term.cols,
@@ -780,9 +785,14 @@ async function launch(panel, dir, { resumeId = null, title = null, harnessName =
       name: panel.name,
       number: panel.number,
       firstMessage,
+      codeMode: Boolean(harness?.codeMode),
     });
     panel.ptyId = started.id;
     panel.sessionId = started.sessionId;
+    panel.codeMode = Boolean(started.codeMode);
+    const badge = panel.head.querySelector('.code-badge');
+    badge.textContent = panel.codeMode ? 'Code Mode' : '';
+    badge.title = panel.codeMode ? 'This session runs in Claude Code\'s experimental Code Mode' : '';
     panel.startedAt = Date.now();
   } catch (err) {
     term.write(`\r\nCould not start the terminal: ${err.message}\r\n`);
@@ -1116,7 +1126,7 @@ function sessionState(p) {
   if (!p.running) return ['off', 'Ended'];
   if (p.needsApproval) return ['asking', 'Needs your approval'];
   if (p.lightState === 'working') return ['working', 'Working'];
-  if (p.lightState === 'idle') return ['idle', 'Waiting for you'];
+  if (p.lightState === 'idle') return p.report ? ['idle', 'Reported back'] : ['idle', 'Waiting for you'];
   return ['', 'Starting'];
 }
 
@@ -1178,7 +1188,7 @@ function treeRowContent(node) {
   const bottom = el('span', 'side-bottom');
   bottom.append(el('span', 'side-num', p.number <= 9 ? `⌘${p.number}` : String(p.number)), pill(), el('span', 'side-state', words));
   parts.push(top, bottom);
-  return { parts, sig: `s|${p.number}|${p.title}|${label}|${state}`, state };
+  return { parts, sig: `s|${p.number}|${p.title}|${label}|${state}|${words}`, state };
 }
 
 function drawSidebar() {
@@ -1647,6 +1657,8 @@ function currentWorkspace() {
       title: p.title,
       harnessName: p.harnessName,
       openedBy: p.openedBy || null,
+      reportMode: p.reportMode || null,
+      report: p.report || null,
       background: Boolean(p.inBackground),
       job: jobs.has(p.number) ? { title: jobs.get(p.number).title, access: jobs.get(p.number).access } : null,
     }));
@@ -1674,6 +1686,8 @@ async function restoreWorkspace() {
         ? focused
         : addPanel(item.number, { quiet: Boolean(item.background), inBackground: Boolean(item.background) });
     panel.openedBy = item.openedBy || null;
+    panel.reportMode = item.reportMode || null;
+    panel.report = item.report || null;
     if (item.job) jobs.set(panel.number, { ...newJob(panel), ...item.job });
     // A session that never got a message has no saved file, so start a fresh one in that folder instead.
     const resumeId = item.sessionId && known.has(item.sessionId) ? item.sessionId : null;
@@ -1813,6 +1827,8 @@ function drawOwnLight(panel, act) {
 // The line at the bottom of the window counts the terminals, how many are working, and how many need you.
 function drawStatusLine() {
   drawSidebar();
+  // A terminal that ends or closes can no longer report, so anyone waiting for it should hear.
+  if (reportWaiters.size) wakeReportWaiters();
   const open = panels.filter((p) => p.cwd);
   statusLine.innerHTML = '';
   if (!open.length) return;
@@ -2220,7 +2236,19 @@ function renderHarnessList() {
       renderHarnessList();
       refreshPickers();
     });
-    row.append(el('span', 'label', '/' + slug(h.name)), el('span', 'detail', tildePath(h.path)), remove);
+    const code = el('label', 'harness-code');
+    const box = el('input');
+    box.type = 'checkbox';
+    box.checked = Boolean(h.codeMode);
+    box.addEventListener('change', async () => {
+      await saveSettings({ harnesses: settings.harnesses.map((x) => (x === h ? { ...x, codeMode: box.checked } : x)) });
+      renderHarnessList();
+    });
+    code.title =
+      "Start new sessions in this harness with Claude Code's experimental Code Mode. Sessions that are " +
+      'already open, and sessions you resume, keep the setting they started with.';
+    code.append(box, document.createTextNode('Code Mode'));
+    row.append(el('span', 'label', '/' + slug(h.name)), el('span', 'detail', tildePath(h.path)), code, remove);
     harnessList.append(row);
   }
 }
@@ -2313,6 +2341,8 @@ api.onAppRequest(async (id, kind, payload) => {
     if (kind === 'gate') api.appResult(id, await gateRequest(payload));
     else if (kind === 'job') api.appResult(id, setJobFromClaude(payload));
     else if (kind === 'wrap-up') api.appResult(id, await wrapUpJob(Number(payload.from), { byClaude: true }));
+    else if (kind === 'report') api.appResult(id, takeReport(payload));
+    else if (kind === 'reports') api.appResult(id, await waitForReports(payload));
     else api.appResult(id, { error: 'Unknown request.' });
   } catch (err) {
     api.appResult(id, { error: err.message });
@@ -2471,11 +2501,16 @@ api.onOpenRequest(async (id, req) => {
     if (!from) throw new Error(`Terminal ${req.from} is not open.`);
     const panel = addPanel(undefined, { quiet: true, inBackground: Boolean(req.background) });
     panel.openedBy = from.number;
+    panel.reportMode = req.wait ? 'result' : 'message';
     if (!jobs.has(from.number)) jobs.set(from.number, newJob(from));
+    // A terminal that is waiting with wait_for_report gets the report through report_back instead of a message.
+    const howToReport = req.wait
+      ? `When you have finished, call the panels report_back tool with a short report. Terminal ${from.number} is ` +
+        'waiting for it there, so do not send the report with SendMessage. Then tell the user here what you did.'
+      : `When you have finished, send ${from.name} a short report with SendMessage, then tell the user here what you did.`;
     const firstMessage =
       `Terminal ${from.number} (${from.name}) opened this terminal and asked for help with the task below. ` +
-      `When you have finished, send ${from.name} a short report with SendMessage, then tell the user here what you did.\n\n` +
-      `Task from terminal ${from.number}:\n${req.task}`;
+      `${howToReport}\n\nTask from terminal ${from.number}:\n${req.task}`;
     await launch(panel, req.folder, {
       title: req.harnessName || baseName(req.folder),
       harnessName: req.harnessName,
@@ -2489,6 +2524,78 @@ api.onOpenRequest(async (id, req) => {
     api.openResult(id, { error: err.message });
   }
 });
+
+// ---------- Reports for wait_for_report ----------
+
+// A terminal opened with wait set to true hands in its report with report_back. The terminal that
+// opened it collects reports with wait_for_report, which asks here about once a minute until they are in.
+
+function wakeReportWaiters() {
+  for (const wake of [...reportWaiters]) wake();
+}
+
+function takeReport({ from, report }) {
+  const panel = panels.find((p) => p.number === Number(from) && p.cwd);
+  if (!panel) throw new Error('This terminal is not open in Claude Panels.');
+  if (!panel.openedBy) throw new Error('No other terminal opened this one, so there is nobody to report to.');
+  const owner = panels.find((p) => p.number === panel.openedBy && p.cwd);
+  if (!owner) throw new Error(`Terminal ${panel.openedBy}, which opened this one, is closed.`);
+  if (panel.reportMode !== 'result') {
+    throw new Error(`Terminal ${owner.number} is not waiting for a report here. Send your report to ${owner.name} with SendMessage instead.`);
+  }
+  const text = String(report || '').trim();
+  if (!text) throw new Error('Write the report first.');
+  panel.report = { text: text.slice(0, 20000), at: Date.now() };
+  saveWorkspace();
+  drawSidebar();
+  wakeReportWaiters();
+  return { to: owner.number, toName: owner.name };
+}
+
+// The state of each terminal the caller is waiting for.
+function reportStates(from, numbers) {
+  return numbers.map((n) => {
+    const p = panels.find((x) => x.number === n && x.cwd && x.openedBy === from);
+    if (!p) return { number: n, state: 'closed' };
+    const base = { number: n, name: p.name };
+    if (p.report) return { ...base, state: 'reported', report: p.report.text };
+    if (p.reportMode !== 'result') return { ...base, state: 'by-message' };
+    if (!p.running) return { ...base, state: 'ended' };
+    if (p.needsApproval) return { ...base, state: 'asking' };
+    return { ...base, state: p.lightState === 'idle' ? 'idle' : 'working' };
+  });
+}
+
+async function waitForReports({ from, terminals, waitMs }) {
+  from = Number(from);
+  const owner = panels.find((p) => p.number === from && p.cwd);
+  if (!owner) throw new Error('This terminal is not open in Claude Panels.');
+  let numbers = (Array.isArray(terminals) ? terminals : []).map(Number).filter(Number.isFinite);
+  if (!numbers.length) numbers = panels.filter((p) => p.openedBy === from && p.reportMode === 'result' && p.cwd).map((p) => p.number);
+  if (!numbers.length) throw new Error('You have no terminals to wait for. Open them with open_terminal and wait set to true first.');
+  const notMine = numbers.filter((n) => {
+    const p = panels.find((x) => x.number === n && x.cwd);
+    return p && p.openedBy !== from;
+  });
+  if (notMine.length) throw new Error(`You did not open terminal ${notMine.join(' or ')}, so you cannot wait for its report.`);
+
+  // Finished means every terminal has reported, or can no longer report.
+  const finished = () => reportStates(from, numbers).every((r) => ['reported', 'closed', 'ended', 'by-message'].includes(r.state));
+  const limit = Math.min(Math.max(Number(waitMs) || 0, 0), 55000);
+  if (!finished() && limit) {
+    await new Promise((resolve) => {
+      const done = () => {
+        reportWaiters.delete(check);
+        clearTimeout(timer);
+        resolve();
+      };
+      const check = () => finished() && done();
+      const timer = setTimeout(done, limit);
+      reportWaiters.add(check);
+    });
+  }
+  return { done: finished(), terminals: reportStates(from, numbers) };
+}
 
 // A short notice at the top right that goes away by itself.
 function showNotice(title, text) {

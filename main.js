@@ -39,6 +39,7 @@ const DEFAULT_SETTINGS = {
   autoCVs: true, // keep a short CV for each session, so sessions can find experts for a task
   classicDisplay: false, // start Claude with its classic display, which keeps the whole conversation in the terminal
   titles: {}, // sessionId -> { title, basedOn, at }
+  codeModeSessions: {}, // sessionId -> when it started, for sessions started with Code Mode, which must resume with it
 };
 
 const settingsFile = () => path.join(app.getPath('userData'), 'settings.json');
@@ -115,6 +116,9 @@ function panelsPrompt(number, name) {
     'The terminals you open form your job. Name it with set_job, which can also make it open to other terminals ' +
     '(it is closed by default). When every terminal in the job has reported back and you have told the user ' +
     'the result, call wrap_up_job to close them. ' +
+    'To run several terminals at the same time and carry on only when they have all finished, open each one with ' +
+    'wait set to true, then call wait_for_report with their numbers. It returns their reports as its result. ' +
+    'If you run in Code Mode, you can open them and wait for them from one piece of code. ' +
     'Use it when part of the work belongs in a different harness or folder, or when a separate piece of work can ' +
     'run alongside yours. Do not use it for small tasks you can do yourself. Call list_harnesses first to choose ' +
     'where it should run, and tell the user which terminal you opened and why.\n\n' +
@@ -136,10 +140,24 @@ function panelsPrompt(number, name) {
   return text;
 }
 
-function startTerminal({ cwd, cols, rows, resumeId, name, number, firstMessage }) {
+// How long one wait_for_report call may wait, so Claude Code needs to allow its tools this long.
+const WAIT_LIMIT_MS = 2 * 60 * 60 * 1000;
+
+// Code Mode is switched on per harness. A session started with Code Mode can only be resumed with it,
+// so the app remembers which sessions started with it.
+function rememberCodeMode(sessionId) {
+  const kept = Object.entries(settings.codeModeSessions || {})
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 499);
+  settings.codeModeSessions = { ...Object.fromEntries(kept), [sessionId]: Date.now() };
+  saveSettings();
+}
+
+function startTerminal({ cwd, cols, rows, resumeId, name, number, firstMessage, codeMode }) {
   // New sessions get an id chosen here, so the app knows which saved session each panel is running.
   const sessionId = resumeId || crypto.randomUUID();
   if (!fs.existsSync(cwd)) throw new Error(`Folder not found: ${cwd}`);
+  const useCodeMode = resumeId ? Boolean(settings.codeModeSessions?.[resumeId]) : Boolean(codeMode);
 
   // The name goes in through an environment variable, so a name chosen with /rename can contain spaces.
   if (!/^[^\n\r"]{1,80}$/.test(name || '')) throw new Error('Not a valid session name');
@@ -197,6 +215,9 @@ function startTerminal({ cwd, cols, rows, resumeId, name, number, firstMessage }
     CLAUDE_PANELS_SETTINGS: JSON.stringify(gateSettings()),
     CLAUDE_PANELS_SELF: String(number),
     ...(control ? { CLAUDE_PANELS_CONTROL: control.url, CLAUDE_PANELS_TOKEN: control.token } : {}),
+    ...(useCodeMode ? { CLAUDE_CODE_EXPERIMENTAL_CODE_MODE: '1' } : {}),
+    // wait_for_report can wait for up to two hours, so Claude must not give up on the tool sooner.
+    MCP_TOOL_TIMEOUT: process.env.MCP_TOOL_TIMEOUT || String(WAIT_LIMIT_MS + 5 * 60 * 1000),
     ...(firstMessage && !resumeId ? { CLAUDE_PANELS_FIRST: String(firstMessage).slice(0, 8000) } : {}),
   };
 
@@ -208,6 +229,7 @@ function startTerminal({ cwd, cols, rows, resumeId, name, number, firstMessage }
     env,
   });
 
+  if (useCodeMode && !resumeId) rememberCodeMode(sessionId);
   const id = nextId++;
   terminals.set(id, proc);
   proc.onData((data) => win && !win.isDestroyed() && win.webContents.send('pty:data', id, data));
@@ -217,7 +239,7 @@ function startTerminal({ cwd, cols, rows, resumeId, name, number, firstMessage }
   });
 
   rememberRecent(cwd);
-  return { id, sessionId };
+  return { id, sessionId, codeMode: useCodeMode };
 }
 
 ipcMain.handle('pty:start', (_e, opts) => startTerminal(opts));
@@ -251,7 +273,7 @@ function placesForClaude() {
   };
 }
 
-async function openForClaude({ from, task, harness, folder, background }) {
+async function openForClaude({ from, task, harness, folder, background, wait }) {
   task = String(task || '').trim();
   if (!task) throw new Error('Give the new terminal a task.');
   if (task.length > 6000) throw new Error('The task is too long. Keep it under 6,000 characters.');
@@ -294,7 +316,7 @@ async function openForClaude({ from, task, harness, folder, background }) {
   const id = crypto.randomUUID();
   const result = await new Promise((resolve) => {
     openWaiting.set(id, resolve);
-    win.webContents.send('panels:open-request', id, { from: requester.number, folder: dir, harnessName, task, background: background !== false });
+    win.webContents.send('panels:open-request', id, { from: requester.number, folder: dir, harnessName, task, background: background !== false, wait: Boolean(wait) });
     setTimeout(() => resolve({ error: 'The app did not open the terminal in time.' }), 30000);
   });
   openWaiting.delete(id);
@@ -353,6 +375,10 @@ function startControlServer() {
       if (req.url === '/gate') return reply(200, await askWindow('gate', args, 280000));
       if (req.url === '/job') return reply(200, await askWindow('job', args));
       if (req.url === '/wrap-up') return reply(200, await askWindow('wrap-up', args, 60000));
+      // A terminal hands in its report, and the terminal that opened it waits for reports. A wait is
+      // answered within a minute, and the tool server asks again until the reports are in.
+      if (req.url === '/report') return reply(200, await askWindow('report', args));
+      if (req.url === '/reports') return reply(200, await askWindow('reports', args, 70000));
       reply(404, { error: 'Unknown request.' });
     } catch (err) {
       reply(400, { error: err.message });

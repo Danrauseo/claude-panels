@@ -90,6 +90,14 @@ A harness is a saved folder with a short name. Each new terminal opens with a te
 
 Claude uses the CLAUDE.md and settings it finds in the folder you start it in. You can also add and remove harnesses in Settings.
 
+### Code Mode
+
+Each harness in Settings has a **Code Mode** box. When it is ticked, new sessions in that harness start with Claude Code's experimental Code Mode. In Code Mode, Claude can write a short piece of code that calls several tools and works with their results, instead of calling one tool at a time. Those terminals show **Code Mode** in their top bar.
+
+- A session that started with Code Mode can only be resumed with Code Mode. The app remembers which sessions started with it, so ⌘R, ⌘K and the stack view resume each session the way it started, even if you change the box later.
+- Changing the box does not change sessions that are already open.
+- Code Mode needs Claude Code 2.1.323 or newer. It is experimental, and it does not work with Remote Control.
+
 ## What each terminal shows
 
 Each terminal's top bar shows its shortcut (⌘1 to ⌘9), a light, its harness and what the session is about. Buttons to fill the window and to close the terminal appear when you move the mouse over a terminal:
@@ -115,6 +123,8 @@ Only you can answer these. Claude in one terminal cannot approve anything for an
 ## Terminals that open terminals
 
 Claude in one terminal can open a new terminal when part of its work belongs in another harness or folder, or when a separate piece of work can run alongside its own. It uses the app's `open_terminal` tool, after checking where it can run with `list_harnesses`. The new terminal starts Claude in that harness, and its first message is the task, starting with which terminal asked for it. When it has finished, it sends the terminal that opened it a short report.
+
+Claude can also open terminals and wait for all of them. It opens each one with `wait` set to true, and then calls `wait_for_report` with their numbers. Each new session hands in its report with the `report_back` tool instead of sending a message, and `wait_for_report` returns all the reports together when every terminal has finished. It also returns if a terminal ends or closes without reporting, or after 30 minutes (Claude can ask for up to two hours), and Claude can call it again to keep waiting. While it waits, a terminal that needs you still shows its approval card, and its row in the Background list says **Reported back** once it has handed in its report. In Code Mode, Claude can open the terminals and wait for them from one piece of code.
 
 By default the new session runs in the background, so it does not take a panel. It appears in the Background list on the right of the window, under the terminal that opened it. Claude can ask for a normal panel instead, when you will want to watch the new session or type into it. A panel opened this way does not change what you are looking at, and a small notice at the top right says which terminal opened it, with a **Go to it** button.
 

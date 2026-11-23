@@ -121,8 +121,45 @@ const TOOLS = [
             'panel on screen. The user can still look at it and answer its questions. Defaults to true. Set it to ' +
             'false only when the user will want to watch the new session or type into it.',
         },
+        wait: {
+          type: 'boolean',
+          description:
+            'Set to true if you will collect this terminal\'s report with wait_for_report, as a tool result, ' +
+            'instead of getting it as a message. Use it to run several terminals at the same time and carry on ' +
+            'when they have all finished. Defaults to false.',
+        },
       },
       required: ['task'],
+    },
+  },
+  {
+    name: 'wait_for_report',
+    description:
+      'Wait for the terminals you opened with wait set to true to finish, and get their reports back as the ' +
+      'result. It returns when every one of them has reported, or has ended or closed without reporting, or ' +
+      'when the time runs out. If the time runs out it says which are still working, and you can call it ' +
+      'again. A terminal that needs the user stays waiting until the user answers it in the app.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        terminals: {
+          type: 'array',
+          items: { type: 'number' },
+          description: 'The numbers of the terminals to wait for. Leave it out to wait for every terminal you opened with wait set to true.',
+        },
+        minutes: { type: 'number', description: 'The longest to wait, in minutes. Defaults to 30. The most is 120.' },
+      },
+    },
+  },
+  {
+    name: 'report_back',
+    description:
+      'Hand in your report to the terminal that opened you, when it opened you with wait set to true and is ' +
+      'waiting for your report. Your first message says whether to use this or SendMessage.',
+    inputSchema: {
+      type: 'object',
+      properties: { report: { type: 'string', description: 'A short report of what you did and what you found.' } },
+      required: ['report'],
     },
   },
   {
@@ -353,18 +390,53 @@ async function listHarnesses() {
 
 async function openTerminal(args) {
   const background = args.background !== false;
-  const r = await askApp('/open', { from: SELF, task: args.task, harness: args.harness, folder: args.folder, background });
+  const wait = args.wait === true;
+  const r = await askApp('/open', { from: SELF, task: args.task, harness: args.harness, folder: args.folder, background, wait });
   const where = background ? ' It runs in the background and is listed in the sidebar of the app.' : '';
-  return (
-    `Opened terminal ${r.number} (${r.name}) in ${r.folder}.${where} It has started on the task and will send you a ` +
-    `report with SendMessage when it has finished. Tell the user you opened terminal ${r.number} and why.`
-  );
+  const how = wait
+    ? `will hand in its report when it has finished. Call wait_for_report with terminal ${r.number} to get it.`
+    : 'will send you a report with SendMessage when it has finished.';
+  return `Opened terminal ${r.number} (${r.name}) in ${r.folder}.${where} It has started on the task and ${how} Tell the user you opened terminal ${r.number} and why.`;
+}
+
+// Asks the app about once a minute until every terminal has reported or the time runs out. Each ask
+// is short, so no connection has to stay open for long.
+async function waitForReport(args) {
+  const minutes = Math.min(Math.max(Number(args.minutes) || 30, 1), 120);
+  const until = Date.now() + minutes * 60000;
+  const terminals = Array.isArray(args.terminals) ? args.terminals : [];
+  let r;
+  for (;;) {
+    const left = until - Date.now();
+    r = await askApp('/reports', { from: SELF, terminals, waitMs: Math.max(0, Math.min(50000, left)) }, 75000);
+    if (r.done || Date.now() >= until) break;
+  }
+  const lines = [];
+  const still = [];
+  for (const t of r.terminals) {
+    const who = t.name ? `Terminal ${t.number} (${t.name})` : `Terminal ${t.number}`;
+    if (t.state === 'reported') lines.push(`Report from terminal ${t.number}${t.name ? ` (${t.name})` : ''}:\n${t.report}`);
+    else if (t.state === 'closed') lines.push(`${who} is closed and did not report.`);
+    else if (t.state === 'ended') lines.push(`${who} stopped without reporting.`);
+    else if (t.state === 'by-message') lines.push(`${who} was not opened with wait set to true, so it reports with SendMessage instead.`);
+    else {
+      const doing = t.state === 'asking' ? 'is waiting for the user to approve something' : t.state === 'idle' ? 'is waiting for the user' : 'is still working';
+      still.push(`${who} ${doing}.`);
+    }
+  }
+  if (still.length) lines.push(`After ${minutes} minutes these have not reported yet. Call wait_for_report again to keep waiting.\n${still.join('\n')}`);
+  return lines.join('\n\n');
 }
 
 async function callTool(name, args) {
   if (name === 'list_panels') return loadPanels().map(describePanel).join('\n') || 'No terminals are open.';
   if (name === 'list_harnesses') return listHarnesses();
   if (name === 'open_terminal') return openTerminal(args);
+  if (name === 'wait_for_report') return waitForReport(args);
+  if (name === 'report_back') {
+    const r = await askApp('/report', { from: SELF, report: args.report });
+    return `Your report has been handed to terminal ${r.to} (${r.toName}). Now tell the user here what you did.`;
+  }
   if (name === 'set_job') {
     const r = await askApp('/job', { from: SELF, title: args.title, access: args.access });
     return `Your job is "${r.title}" and it is ${r.access}. It has ${r.members} terminal${r.members === 1 ? '' : 's'} so far.`;
