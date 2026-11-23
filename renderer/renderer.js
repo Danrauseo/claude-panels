@@ -1106,10 +1106,8 @@ function toggleSidebar(open = !sidebarOpen) {
 // branch, the sessions it opened hang under it, and each session's working subagents hang under that session.
 // New rows grow out of their parent's row, and finished rows move back up into it before they go.
 const TREE_INDENT = 18;
-const TREE_ROW = { coord: 32, session: 46, agent: 28, job: 92 }; // row heights
+const TREE_ROW = { coord: 32, session: 46, agent: 28 }; // row heights (a job card is measured instead)
 const TREE_MARK = { coord: 16, session: 14, agent: 14, job: 17 }; // where the mark sits inside each row
-const REQUEST_HEIGHT = 66; // each question about a closed job adds this much to the job's row
-const rowHeight = (n) => TREE_ROW[n.kind] + (n.kind === 'job' ? (jobs.get(n.panel.number)?.requests.length || 0) * REQUEST_HEIGHT : 0);
 const TREE_GAP = 2;
 const treeRows = new Map(); // key -> { el, elbow, node, y, drawn }
 let sidebarHideTimer = null;
@@ -1199,12 +1197,58 @@ function drawSidebar() {
 
   const nodes = treeNodes();
   const keys = new Set(nodes.map((n) => n.key));
+  const byKey = new Map(nodes.map((n) => [n.key, n]));
+  const oldY = new Map([...treeRows].map(([k, r]) => [k, r.y]));
+
+  // First draw every row's content, so a job card can be measured: its height depends on its questions.
+  const fresh = new Set();
+  for (const n of nodes) {
+    let row = treeRows.get(n.key);
+    if (!row || row.leaving) {
+      row?.el.remove();
+      const elx = el('div', 'tree-row ' + n.kind);
+      elx.tabIndex = 0;
+      elx.setAttribute('role', 'button');
+      elx.dataset.key = n.key;
+      elx.dataset.number = String(n.panel.number);
+      elx.style.opacity = '0';
+      row = { el: elx, elbow: n.parent ? el('span', 'tree-elbow') : null, drawn: '' };
+      treeRows.set(n.key, row);
+      sideList.append(elx);
+      fresh.add(n.key);
+    }
+    row.node = n;
+    const { parts, sig, state } = treeRowContent(n);
+    if (row.drawn !== sig) {
+      row.drawn = sig;
+      row.el.innerHTML = '';
+      if (row.elbow) row.el.append(row.elbow);
+      row.el.append(...parts);
+    }
+    row.el.className = 'tree-row ' + n.kind;
+    row.el.style.paddingLeft = n.depth * TREE_INDENT + 8 + 'px';
+    row.el.classList.toggle('selected', n.panel === peeked && n.kind === 'session');
+    row.el.classList.toggle('asking', state === 'asking');
+    row.el.title =
+      n.kind === 'agent'
+        ? `A subagent of ${n.panel.title || n.panel.name}: ${n.agent.description}`
+        : n.kind === 'coord' || n.kind === 'job'
+          ? `Terminal ${n.panel.number}. Click to go to it.`
+          : `${n.panel.title || n.panel.name}. Click to look at it.`;
+    if (n.kind === 'job') {
+      row.el.style.height = 'auto';
+      n.h = Math.ceil(row.el.offsetHeight);
+    } else {
+      n.h = TREE_ROW[n.kind];
+    }
+    row.el.style.height = n.h + 'px';
+  }
+
   let y = 0;
   for (const n of nodes) {
     n.y = y;
-    y += rowHeight(n) + TREE_GAP;
+    y += n.h + TREE_GAP + (n.kind === 'job' ? 4 : 0);
   }
-  const byKey = new Map(nodes.map((n) => [n.key, n]));
 
   // Rows that have gone move up into their parent's row and fade, then are removed.
   for (const [key, row] of treeRows) {
@@ -1221,55 +1265,26 @@ function drawSidebar() {
   }
 
   for (const n of nodes) {
-    let row = treeRows.get(n.key);
-    const fresh = !row || row.leaving;
-    if (fresh) {
-      row?.el.remove();
-      const elx = el('div', 'tree-row ' + n.kind);
-      elx.tabIndex = 0;
-      elx.setAttribute('role', 'button');
-      elx.dataset.key = n.key;
-      elx.dataset.number = String(n.panel.number);
-      const elbow = n.parent ? el('span', 'tree-elbow') : null;
-      row = { el: elx, elbow, node: n, y: n.y, drawn: '' };
-      treeRows.set(n.key, row);
-      // A new row starts at its parent's place and moves out to its own.
-      const parent = n.parent && byKey.get(n.parent);
-      const from = parent && treeRows.get(n.parent)?.y !== undefined ? treeRows.get(n.parent).y : n.y;
-      elx.style.transform = `translate(${parent ? parent.depth * TREE_INDENT : n.depth * TREE_INDENT}px, ${from}px)`;
-      elx.style.opacity = '0';
-      sideList.append(elx);
-      requestAnimationFrame(() => requestAnimationFrame(() => placeRow(row)));
-    }
-    row.node = n;
+    const row = treeRows.get(n.key);
     row.y = n.y;
-    const { parts, sig, state } = treeRowContent(n);
-    if (row.drawn !== sig) {
-      row.drawn = sig;
-      row.el.innerHTML = '';
-      if (row.elbow) row.el.append(row.elbow);
-      row.el.append(...parts);
-    }
-    row.el.style.height = rowHeight(n) + 'px';
-    row.el.className = 'tree-row ' + n.kind;
-    row.el.style.paddingLeft = n.depth * TREE_INDENT + 8 + 'px';
-    row.el.classList.toggle('selected', n.panel === peeked && n.kind === 'session');
-    row.el.classList.toggle('asking', state === 'asking');
-    row.el.title =
-      n.kind === 'agent'
-        ? `A subagent of ${n.panel.title || n.panel.name}: ${n.agent.description}`
-        : n.kind === 'coord' || n.kind === 'job'
-          ? `Terminal ${n.panel.number}. Click to go to it.`
-          : `${n.panel.title || n.panel.name}. Click to look at it.`;
     if (row.elbow) {
+      // The line starts under the parent's mark, or under the whole card for a job.
       const parent = byKey.get(n.parent);
-      const top = parent ? parent.y + TREE_MARK[parent.kind] + 6 : n.y;
+      const top = !parent ? n.y : parent.kind === 'job' ? parent.y + parent.h + 1 : parent.y + TREE_MARK[parent.kind] + 6;
       row.elbow.dataset.height = String(Math.max(0, n.y + TREE_MARK[n.kind] - top));
       row.elbow.style.top = TREE_MARK[n.kind] + 'px';
       row.elbow.style.left = (n.depth - 1) * TREE_INDENT + 13 + 'px';
       row.elbow.style.width = TREE_INDENT - 6 + 'px';
     }
-    if (!fresh) placeRow(row);
+    if (fresh.has(n.key)) {
+      // A new row starts at its parent's place and moves out to its own.
+      const parent = n.parent && byKey.get(n.parent);
+      const from = parent ? (oldY.has(n.parent) ? oldY.get(n.parent) : parent.y) : n.y;
+      row.el.style.transform = `translate(${parent ? parent.depth * TREE_INDENT : n.depth * TREE_INDENT}px, ${from}px)`;
+      requestAnimationFrame(() => requestAnimationFrame(() => placeRow(row)));
+    } else {
+      placeRow(row);
+    }
   }
   sideList.style.setProperty('--tree-height', y + 'px');
 }
@@ -1324,29 +1339,40 @@ function jobRowContent(node, label) {
   const job = jobs.get(owner);
   const progress = jobProgress(owner);
   const parts = [];
+
+  // First line: the job's name, and whether it is closed or open.
   const top = el('span', 'job-top');
   const mark = el('span', 'tree-mark coord');
   mark.style.setProperty('--hue', harnessColour(label));
-  top.append(mark, el('span', 'tree-title strong job-title', job.title));
-  const meta = el('span', 'job-meta');
   const access = el('span', 'job-access');
   access.dataset.action = 'access';
   access.dataset.owner = String(owner);
-  access.title = job.access === 'closed' ? 'Closed: other terminals need your permission to use this job. Click to open it.' : 'Open: any terminal can use this job. Click to close it.';
+  access.title =
+    job.access === 'closed'
+      ? 'Closed: other terminals need your permission to use this job. Click to open it.'
+      : 'Open: any terminal can use this job. Click to close it.';
   access.innerHTML = (job.access === 'closed' ? LOCK_CLOSED : LOCK_OPEN) + (job.access === 'closed' ? 'Closed' : 'Open');
-  meta.append(access, el('span', 'job-owner', `${owner <= 9 ? '⌘' + owner : owner} ${label}`), el('span', 'side-state', progress.text));
-  const actions = el('span', 'job-actions');
+  top.append(mark, el('span', 'job-title', job.title), access);
+
+  // Second line: who owns it, how it is going, and Wrap up.
+  const meta = el('span', 'job-meta');
+  const about = el('span', 'job-about');
+  // The status goes first, so it still shows when the line is too long.
+  about.append(el('span', progress.asking ? 'job-needs' : null, progress.text), el('span', null, '  ·  '), el('span', 'side-num', owner <= 9 ? `⌘${owner}` : String(owner)), el('span', null, ` ${label}`));
   const wrap = el('span', 'btn job-btn' + (progress.ready ? ' ready' : ''), job.wrapping ? 'Wrapping up…' : 'Wrap up');
   wrap.dataset.action = 'wrap';
   wrap.dataset.owner = String(owner);
   wrap.title = progress.ready
     ? 'Every session has finished. Close them all and keep their conversations.'
     : 'Close every session in this job. Their conversations are kept.';
-  actions.append(wrap);
-  parts.push(top, meta, actions);
+  meta.append(about, wrap);
+  parts.push(top, meta);
+
+  // A question for each terminal that wants to use the closed job.
   for (const r of job.requests) {
     const box = el('span', 'job-request');
-    box.append(el('span', 'job-request-text', `⌘${r.from.number} ${r.from.harnessName || baseName(r.from.cwd || '')} wants to ${r.tool === 'SendMessage' ? 'message' : 'read'} ${r.target.title || r.target.name}.`));
+    const who = `⌘${r.from.number} ${r.from.harnessName || baseName(r.from.cwd || '')}`;
+    box.append(el('span', 'job-request-text', `${who} wants to ${r.tool === 'SendMessage' ? 'message' : 'read'} ${r.target.title || r.target.name}.`));
     const buttons = el('span', 'job-request-buttons');
     for (const [action, text] of [['allow', 'Allow once'], ['deny', 'Deny']]) {
       const b = el('span', 'btn job-btn' + (action === 'allow' ? ' primary' : ''), text);
@@ -1359,7 +1385,7 @@ function jobRowContent(node, label) {
     parts.push(box);
   }
   const sig = `j|${job.title}|${job.access}|${progress.text}|${progress.ready}|${job.wrapping}|${label}|${job.requests.map((r) => r.id).join(',')}`;
-  return { parts, sig, state: job.requests.length ? 'asking' : '' };
+  return { parts, sig, state: '' };
 }
 
 function jobAction(owner, action, requestId) {
