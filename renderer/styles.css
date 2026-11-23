@@ -743,3 +743,58 @@ body > .approval-card { position: fixed; }
 .bg-host > .panel { width: 100%; height: 100%; }
 .panel.in-background .fill-btn { display: none; }
 .head-btn[hidden] { display: none; }
+
+/* ---------- The tree of background sessions in the sidebar ---------- */
+
+.side-list { position: relative; padding: 6px 6px 8px; overflow-x: hidden; }
+.side-list::after { content: ''; display: block; height: var(--tree-height, 0px); }
+.tree-row {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  right: 6px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding-right: 8px;
+  font: inherit;
+  color: var(--text);
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: transform 0.45s cubic-bezier(0.3, 0.7, 0.3, 1), opacity 0.35s ease, background 0.15s;
+  will-change: transform;
+}
+.tree-row:hover { background: var(--hover); }
+.tree-row.selected { background: var(--select); border-color: rgba(127, 157, 255, 0.3); }
+.tree-row.asking { background: rgba(227, 161, 59, 0.1); }
+.tree-row.session { flex-direction: column; align-items: stretch; justify-content: center; gap: 4px; }
+.tree-row.session .side-bottom { padding-left: 15px; }
+.tree-row.agent { color: var(--muted); font-size: 11.5px; }
+.tree-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.tree-row.agent .tree-title { font-weight: 400; }
+.tree-title.strong { flex: none; max-width: 120px; font-weight: 600; }
+.tree-sub { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 11.5px; }
+.tree-time { color: var(--faint); font: 10.5px "SF Mono", Menlo, monospace; font-variant-numeric: tabular-nums; }
+
+.tree-mark { width: 9px; height: 9px; flex: none; border-radius: 50%; background: var(--faint); position: relative; z-index: 1; }
+.tree-mark.working { background: var(--panel); border: 1.5px solid rgba(63, 185, 80, 0.3); border-top-color: #3fb950; animation: spin 0.9s linear infinite; }
+.tree-mark.idle { background: #e3a13b; }
+.tree-mark.asking { background: #e3a13b; box-shadow: 0 0 0 3px rgba(227, 161, 59, 0.22); animation: tree-pulse 1.2s ease-in-out infinite; }
+.tree-mark.off { background: var(--faint); }
+.tree-mark.coord { border-radius: 2px; transform: rotate(45deg) scale(0.85); background: hsl(var(--hue, 220), 60%, 70%); }
+@keyframes tree-pulse { 50% { box-shadow: 0 0 0 5px rgba(227, 161, 59, 0.12); } }
+
+/* The line from a parent's mark down and across to this row's mark. */
+.tree-elbow {
+  position: absolute;
+  height: 0;
+  transform: translateY(-100%);
+  border-left: 1.5px solid rgba(127, 157, 255, 0.32);
+  border-bottom: 1.5px solid rgba(127, 157, 255, 0.32);
+  border-bottom-left-radius: 7px;
+  pointer-events: none;
+  transition: height 0.45s cubic-bezier(0.3, 0.7, 0.3, 1);
+}

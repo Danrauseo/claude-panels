@@ -1094,66 +1094,170 @@ function toggleSidebar(open = !sidebarOpen) {
   drawSidebar();
 }
 
-// The sidebar lists the background sessions, grouped by the terminal that opened them.
-let sidebarDrawn = '';
+// The sidebar draws the background sessions as a tree. A panel that opened sessions is at the top of its
+// branch, the sessions it opened hang under it, and each session's working subagents hang under that session.
+// New rows grow out of their parent's row, and finished rows move back up into it before they go.
+const TREE_INDENT = 18;
+const TREE_ROW = { coord: 32, session: 46, agent: 28 }; // row heights
+const TREE_MARK = { coord: 16, session: 14, agent: 14 }; // where the mark sits inside each row
+const TREE_GAP = 2;
+const treeRows = new Map(); // key -> { el, elbow, node, y, drawn }
+let sidebarHideTimer = null;
+
+function sessionState(p) {
+  if (!p.running) return ['off', 'Ended'];
+  if (p.needsApproval) return ['asking', 'Needs your approval'];
+  if (p.lightState === 'working') return ['working', 'Working'];
+  if (p.lightState === 'idle') return ['idle', 'Waiting for you'];
+  return ['', 'Starting'];
+}
+
+// Every row of the tree in order, each with its depth and the key of its parent row.
+function treeNodes() {
+  const bg = panels.filter((p) => p.inBackground && p.cwd);
+  const nodes = [];
+  const add = (p, depth, parent) => {
+    const kind = p.inBackground ? 'session' : 'coord';
+    nodes.push({ key: 'p' + p.number, kind, depth, parent, panel: p });
+    for (const a of p.agents || []) {
+      nodes.push({ key: `a${p.number}:${a.id || a.description}`, kind: 'agent', depth: depth + 1, parent: 'p' + p.number, agent: a, panel: p });
+    }
+    if (kind === 'coord' || depth === 0) {
+      for (const child of bg.filter((c) => c.openedBy === p.number && c !== p).sort((x, y) => x.number - y.number)) {
+        add(child, depth + 1, 'p' + p.number);
+      }
+    }
+  };
+  const openers = new Set(bg.map((p) => p.openedBy).filter((n) => n && panels.some((o) => o.number === n && o.cwd)));
+  const roots = panels
+    .filter((p) => p.cwd && (openers.has(p.number) || (p.inBackground && !openers.has(p.openedBy))))
+    .sort((a, b) => a.number - b.number);
+  for (const r of roots) add(r, 0, null);
+  return nodes;
+}
+
+function treeRowContent(node) {
+  const p = node.panel;
+  const label = p.harnessName || baseName(p.cwd || '');
+  const pill = () => {
+    const x = el('span', 'harness', label);
+    x.style.setProperty('--hue', harnessColour(label));
+    return x;
+  };
+  const parts = [];
+  if (node.kind === 'agent') {
+    const mins = Math.max(0, Math.floor((Date.now() - node.agent.since) / 60000));
+    parts.push(el('span', 'tree-mark working'), el('span', 'tree-title', node.agent.description), el('span', 'tree-time', `${mins}m`));
+    return { parts, sig: `a|${node.agent.description}|${mins}` };
+  }
+  if (node.kind === 'coord') {
+    const mark = el('span', 'tree-mark coord');
+    mark.style.setProperty('--hue', harnessColour(label));
+    parts.push(mark, el('span', 'side-num', p.number <= 9 ? `⌘${p.number}` : String(p.number)), el('span', 'tree-title strong', label), el('span', 'tree-sub', p.title && p.title !== label ? p.title : ''));
+    return { parts, sig: `c|${p.number}|${label}|${p.title}` };
+  }
+  const [state, words] = sessionState(p);
+  const top = el('span', 'side-top');
+  top.append(el('span', `tree-mark ${state}`), el('span', 'tree-title', p.title || p.name || `Terminal ${p.number}`));
+  const bottom = el('span', 'side-bottom');
+  bottom.append(el('span', 'side-num', p.number <= 9 ? `⌘${p.number}` : String(p.number)), pill(), el('span', 'side-state', words));
+  parts.push(top, bottom);
+  return { parts, sig: `s|${p.number}|${p.title}|${label}|${state}`, state };
+}
+
 function drawSidebar() {
-  const bg = panels.filter((p) => p.inBackground && p.cwd).sort((a, b) => a.number - b.number);
-  // Show the list when the first background session appears, and hide it when the last one closes.
+  const bg = panels.filter((p) => p.inBackground && p.cwd);
+  // Show the list when the first background session appears. When the last one closes, let its row
+  // move back up first, then hide the list.
   if (bg.length > backgroundCount) sidebarOpen = true;
-  if (!bg.length) sidebarOpen = false;
+  clearTimeout(sidebarHideTimer);
+  if (!bg.length && backgroundCount > 0) sidebarHideTimer = setTimeout(() => toggleSidebar(false), 650);
   backgroundCount = bg.length;
   sideBtn.hidden = bg.length === 0;
   document.getElementById('side-count').textContent = String(bg.length);
   sideBtn.classList.toggle('on', sidebarOpen);
   sidebar.hidden = !sidebarOpen;
+  if (sidebar.hidden) return;
 
-  const groups = new Map();
-  for (const p of bg) {
-    const key = p.openedBy || 0;
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(p);
+  const nodes = treeNodes();
+  const keys = new Set(nodes.map((n) => n.key));
+  let y = 0;
+  for (const n of nodes) {
+    n.y = y;
+    y += TREE_ROW[n.kind] + TREE_GAP;
   }
-  const describe = (p) => {
-    if (!p.running) return ['off', 'Ended'];
-    if (p.needsApproval) return ['asking', 'Needs your approval'];
-    if (p.lightState === 'working') return ['working', 'Working'];
-    if (p.lightState === 'idle') return ['idle', 'Waiting for you'];
-    return ['', 'Starting'];
-  };
-  const parts = [];
-  for (const [opener, members] of groups) {
-    const from = panels.find((p) => p.number === opener);
-    parts.push({ head: opener ? `Opened by ⌘${opener}${from ? ' ' + (from.harnessName || baseName(from.cwd || '')) : ''}` : 'Moved here by you' });
-    for (const p of members) parts.push({ p, state: describe(p) });
-  }
-  const signature = JSON.stringify([
-    sidebarOpen,
-    peeked?.number,
-    parts.map((x) => (x.head ? x.head : [x.p.number, x.p.title, x.p.harnessName, x.state[0]])),
-  ]);
-  if (signature === sidebarDrawn) return;
-  sidebarDrawn = signature;
+  const byKey = new Map(nodes.map((n) => [n.key, n]));
 
-  sideList.innerHTML = '';
-  for (const part of parts) {
-    if (part.head) {
-      sideList.append(el('div', 'side-group', part.head));
-      continue;
+  // Rows that have gone move up into their parent's row and fade, then are removed.
+  for (const [key, row] of treeRows) {
+    if (keys.has(key) || row.leaving) continue;
+    row.leaving = true;
+    const parent = byKey.get(row.node.parent) || treeRows.get(row.node.parent)?.node;
+    row.el.style.transform = `translate(${parent ? parent.depth * TREE_INDENT : 0}px, ${parent ? parent.y : row.y}px)`;
+    row.el.style.opacity = '0';
+    if (row.elbow) row.elbow.style.height = '0px';
+    setTimeout(() => {
+      row.el.remove();
+      if (treeRows.get(key) === row) treeRows.delete(key);
+    }, 480);
+  }
+
+  for (const n of nodes) {
+    let row = treeRows.get(n.key);
+    const fresh = !row || row.leaving;
+    if (fresh) {
+      row?.el.remove();
+      const elx = el('button', 'tree-row ' + n.kind);
+      elx.dataset.key = n.key;
+      elx.dataset.number = String(n.panel.number);
+      const elbow = n.parent ? el('span', 'tree-elbow') : null;
+      row = { el: elx, elbow, node: n, y: n.y, drawn: '' };
+      treeRows.set(n.key, row);
+      // A new row starts at its parent's place and moves out to its own.
+      const parent = n.parent && byKey.get(n.parent);
+      const from = parent && treeRows.get(n.parent)?.y !== undefined ? treeRows.get(n.parent).y : n.y;
+      elx.style.transform = `translate(${parent ? parent.depth * TREE_INDENT : n.depth * TREE_INDENT}px, ${from}px)`;
+      elx.style.opacity = '0';
+      sideList.append(elx);
+      requestAnimationFrame(() => requestAnimationFrame(() => placeRow(row)));
     }
-    const { p, state } = part;
-    const row = el('button', 'side-row' + (p === peeked ? ' selected' : '') + (state[0] === 'asking' ? ' asking' : ''));
-    row.dataset.number = String(p.number);
-    row.title = `${p.title || p.name}. Click to look at it.`;
-    const top = el('span', 'side-top');
-    top.append(el('span', `side-light ${state[0]}`), el('span', 'side-title', p.title || p.name || `Terminal ${p.number}`));
-    const bottom = el('span', 'side-bottom');
-    const label = p.harnessName || baseName(p.cwd);
-    const pill = el('span', 'harness', label);
-    pill.style.setProperty('--hue', harnessColour(label));
-    bottom.append(el('span', 'side-num', p.number <= 9 ? `⌘${p.number}` : String(p.number)), pill, el('span', 'side-state', state[1]));
-    row.append(top, bottom);
-    sideList.append(row);
+    row.node = n;
+    row.y = n.y;
+    const { parts, sig, state } = treeRowContent(n);
+    if (row.drawn !== sig) {
+      row.drawn = sig;
+      row.el.innerHTML = '';
+      if (row.elbow) row.el.append(row.elbow);
+      row.el.append(...parts);
+    }
+    row.el.style.height = TREE_ROW[n.kind] + 'px';
+    row.el.style.paddingLeft = n.depth * TREE_INDENT + 8 + 'px';
+    row.el.classList.toggle('selected', n.panel === peeked && n.kind === 'session');
+    row.el.classList.toggle('asking', state === 'asking');
+    row.el.title =
+      n.kind === 'agent'
+        ? `A subagent of ${n.panel.title || n.panel.name}: ${n.agent.description}`
+        : n.kind === 'coord'
+          ? `Terminal ${n.panel.number}. Click to go to it.`
+          : `${n.panel.title || n.panel.name}. Click to look at it.`;
+    if (row.elbow) {
+      const parent = byKey.get(n.parent);
+      const top = parent ? parent.y + TREE_MARK[parent.kind] + 6 : n.y;
+      row.elbow.dataset.height = String(Math.max(0, n.y + TREE_MARK[n.kind] - top));
+      row.elbow.style.top = TREE_MARK[n.kind] + 'px';
+      row.elbow.style.left = (n.depth - 1) * TREE_INDENT + 13 + 'px';
+      row.elbow.style.width = TREE_INDENT - 6 + 'px';
+    }
+    if (!fresh) placeRow(row);
   }
+  sideList.style.setProperty('--tree-height', y + 'px');
+}
+
+function placeRow(row) {
+  if (row.leaving) return;
+  row.el.style.transform = `translate(0px, ${row.y}px)`;
+  row.el.style.opacity = '1';
+  if (row.elbow) row.elbow.style.height = row.elbow.dataset.height + 'px';
 }
 
 // ---------- Stack view (⌘S) ----------
@@ -1456,7 +1560,8 @@ async function refreshMentions() {
     for (const p of panels) {
       drawMentions(p, mentionMap.get(p) || [], activity);
       drawOwnLight(p, activity[p.sessionId] || {});
-      drawAgents(p, activity[p.sessionId]?.agents || []);
+      p.agents = activity[p.sessionId]?.agents || [];
+      drawAgents(p, p.agents);
     }
     drawStatusLine();
   } finally {
@@ -1972,6 +2077,7 @@ sideList.addEventListener('click', (e) => {
   const row = e.target.closest('[data-number]');
   const panel = row && panels.find((p) => p.number === Number(row.dataset.number));
   if (!panel) return;
+  if (!panel.inBackground) return showPanel(panel);
   if (peeked === panel) hidePeek();
   else showPeek(panel);
 });

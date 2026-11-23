@@ -506,9 +506,9 @@ function readActivity(file) {
     }
   }
   // Subagents still working: ones Claude is waiting on, and ones it started in the background.
-  const agents = [...pending.values(), ...background.values()]
-    .filter((c) => c.agent)
-    .map((c) => ({ description: c.description, since: c.since }));
+  const agents = [...pending.entries(), ...background.entries()]
+    .filter(([, c]) => c.agent)
+    .map(([id, c]) => ({ id, description: c.description, since: c.since }));
   return {
     working,
     pending: [...pending.values()].filter((c) => !c.agent).map((c) => c.text).pop() || null,

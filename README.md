@@ -122,7 +122,7 @@ By default the new session runs in the background, so it does not take a panel. 
 
 A background session is a normal Claude Code terminal that keeps running without a panel on screen. Sessions that Claude opens with `open_terminal` start in the background, and you can move any terminal there yourself with ⌘B or the button in its top bar.
 
-- **The Background list** on the right of the window shows each background session with its light, its harness and what it is doing: working, waiting for you, needs your approval, or ended. It opens when the first background session starts and closes when the last one ends. ⌘J or the **Background** button at the top shows or hides it.
+- **The Background list** on the right of the window is drawn as a tree. The panel that opened sessions is at the top of its branch, the sessions it opened hang under it, and the subagents each one is running hang under that session. Each session shows its light, its harness and what it is doing: working, waiting for you, needs your approval, or ended. New sessions and subagents grow out of the row above them, and when one finishes it moves back up into that row. The list opens when the first background session starts and closes when the last one ends. ⌘J or the **Background** button at the top shows or hides it.
 - **Looking at one.** Click a session in the list, or press its number, to show its terminal in a drawer over your panels. You can read it and type into it there. Click the arrow to hide the drawer again.
 - **Open as panel** in the drawer, or ⌘B, gives the session a panel of its own again.
 - **Questions.** When a background session asks for your approval, the card appears in the panel you are using, as it does for any other terminal.
