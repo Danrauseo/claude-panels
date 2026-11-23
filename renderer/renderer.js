@@ -5,6 +5,12 @@ const grid = document.getElementById('grid');
 const emptyState = document.getElementById('empty');
 const layoutBtn = document.getElementById('layout-btn');
 const statusLine = document.getElementById('statusline');
+const bgHost = document.getElementById('bg-host');
+const sidebar = document.getElementById('sidebar');
+const sideList = document.getElementById('side-list');
+const sideBtn = document.getElementById('side-btn');
+const peekEl = document.getElementById('peek');
+const peekBody = document.getElementById('peek-body');
 const filterChip = document.getElementById('filter-chip');
 const filterName = document.getElementById('filter-name');
 const zoomChip = document.getElementById('zoom-chip');
@@ -29,6 +35,11 @@ const mentionMap = new Map(); // panel -> the open panels its session has mentio
 // ⌘⇧↓ shows one group at once: the panel you started from and every session it mentioned.
 let family = null; // { mother, members }
 let restorable = []; // panels open when the app last closed, restored with ⌘R
+// Background sessions run in terminals with no panel on screen. They are listed in the sidebar, and one at a
+// time can be looked at in the peek drawer.
+let peeked = null; // the background panel shown in the peek drawer
+let sidebarOpen = false;
+let backgroundCount = 0;
 
 const TERM_THEME = {
   background: '#12151b',
@@ -176,14 +187,14 @@ function gridFor(count) {
 }
 
 function visiblePanels() {
-  if (zoomed && panels.includes(zoomed)) return [zoomed];
-  if (family) return family.members.filter((p) => panels.includes(p));
-  return panels.filter((p) => !filterKey || !p.cwd || groupOf(p).key === filterKey);
+  if (zoomed && panels.includes(zoomed) && !zoomed.inBackground) return [zoomed];
+  if (family) return family.members.filter((p) => panels.includes(p) && !p.inBackground);
+  return panels.filter((p) => !p.inBackground && (!filterKey || !p.cwd || groupOf(p).key === filterKey));
 }
 
 // ⌘F makes the selected panel fill the window. Pressing it again shows the other panels again.
 function toggleZoom() {
-  if (view !== 'grid') return;
+  if (view !== 'grid' || focused?.inBackground) return;
   navStack = [];
   zoomed = zoomed ? null : focused;
   applyLayout();
@@ -196,7 +207,7 @@ function applyLayout() {
   const odd = n >= 3 && n % 2 === 1;
   const bottom = settings.oddLayout !== 'side';
 
-  emptyState.hidden = panels.length > 0 || view === 'stack';
+  emptyState.hidden = panels.some((p) => !p.inBackground) || view === 'stack';
   layoutBtn.hidden = !odd || view === 'stack' || Boolean(zoomed);
   layoutBtn.title = bottom
     ? 'The last panel is at the bottom. Click to move it to the side (⌘L)'
@@ -217,6 +228,16 @@ function applyLayout() {
 
   for (const p of panels) {
     const i = shown.indexOf(p);
+    p.el.classList.toggle('in-background', Boolean(p.inBackground));
+    drawBackgroundButton(p);
+    if (p.inBackground) {
+      // Kept off screen or in the peek drawer, at a real size, so the terminal keeps its width.
+      p.el.style.display = '';
+      p.el.style.gridColumn = '';
+      p.el.style.gridRow = '';
+      p.head.querySelector('.num').textContent = p.number <= 9 ? `⌘${p.number}` : `${p.number}`;
+      continue;
+    }
     p.el.style.display = i === -1 ? 'none' : '';
     const last = odd && i === n - 1;
     p.el.style.gridColumn = last ? (bottom ? '1 / -1' : `${cols}`) : '';
@@ -293,9 +314,10 @@ function sessionName(panel) {
   return `${panel.number}-${label}`.slice(0, 40);
 }
 
-// A panel opened in the background, by Claude in another terminal, leaves the view and focus as they are.
-function addPanel(wantedNumber, { background = false } = {}) {
-  if (!background) {
+// A quiet panel, opened by Claude in another terminal, leaves the view and focus as they are.
+// A panel opened in the background has no place on screen and is listed in the sidebar instead.
+function addPanel(wantedNumber, { quiet = false, inBackground = false } = {}) {
+  if (!quiet) {
     if (view === 'stack') showGrid();
     zoomed = null;
     navStack = [];
@@ -334,7 +356,13 @@ function addPanel(wantedNumber, { background = false } = {}) {
     e.stopPropagation();
     closePanel(panel);
   });
-  actions.append(fillBtn, closeBtn);
+  panel.bgBtn = el('button', 'head-btn');
+  panel.bgBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    toggleBackground(panel);
+  });
+  fillBtn.classList.add('fill-btn');
+  actions.append(panel.bgBtn, fillBtn, closeBtn);
   panel.head.append(actions);
   panel.body = el('div', 'panel-body');
   panel.el.append(panel.head, panel.body);
@@ -357,17 +385,16 @@ function addPanel(wantedNumber, { background = false } = {}) {
   });
 
   // Keep panels in number order on screen.
+  // Background panels are kept elsewhere, so only a panel that is in the grid can mark the place.
   const at = panels.findIndex((p) => p.number > panel.number);
-  if (at === -1) {
-    panels.push(panel);
-    grid.append(panel.el);
-  } else {
-    grid.insertBefore(panel.el, panels[at].el);
-    panels.splice(at, 0, panel);
-  }
+  const next = panels.find((p) => p.number > panel.number && p.el.parentNode === grid);
+  grid.insertBefore(panel.el, next ? next.el : null);
+  if (at === -1) panels.push(panel);
+  else panels.splice(at, 0, panel);
   applyLayout();
   showPicker(panel);
-  if (!background) setFocus(panel);
+  if (inBackground) setBackground(panel, true);
+  if (!quiet) setFocus(panel);
   return panel;
 }
 
@@ -378,6 +405,7 @@ function closePanel(panel) {
     api.kill(panel.ptyId);
     byPtyId.delete(panel.ptyId);
   }
+  if (peeked === panel) hidePeek(false);
   panel.term?.dispose();
   panel.resizeObserver?.disconnect();
   panel.el.remove();
@@ -387,8 +415,9 @@ function closePanel(panel) {
   if (filterKey && !panels.some((p) => p.cwd && groupOf(p).key === filterKey)) filterKey = null;
   applyLayout();
   const shown = visiblePanels();
-  setFocus(shown.includes(panels[i]) ? panels[i] : shown[shown.length - 1] || null);
+  if (focused === panel || !panels.includes(focused)) setFocus(shown.includes(panels[i]) ? panels[i] : shown[shown.length - 1] || null);
   saveWorkspace();
+  drawStatusLine();
   if (view === 'stack') renderStack();
 }
 
@@ -976,12 +1005,155 @@ function groupByKey(key) {
 }
 
 function showPanel(panel) {
+  if (panel.inBackground) return showPeek(panel);
+  if (peeked) hidePeek(false);
   navStack = [];
   if (family && !family.members.includes(panel)) family = null;
   if (zoomed) zoomed = panel; // in full-window mode, ⌘1 to ⌘9 switch which panel fills the window
   if (filterKey && panel.cwd && groupOf(panel).key !== filterKey) filterKey = null;
   applyLayout();
   setFocus(panel);
+}
+
+// ---------- Background sessions, the sidebar and the peek drawer ----------
+
+const ICON_TO_BACKGROUND =
+  '<svg viewBox="0 0 16 16"><rect x="2.5" y="2.5" width="11" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M10.5 2.5v11" stroke="currentColor" stroke-width="1.4"/><path d="M4.8 8h3.2M6.6 6.4 8.2 8 6.6 9.6" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const ICON_TO_GRID =
+  '<svg viewBox="0 0 16 16"><rect x="2.5" y="2.5" width="11" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M5.5 10.5l5-5M6.5 5.5h4v4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+function drawBackgroundButton(p) {
+  if (!p.bgBtn) return;
+  p.bgBtn.hidden = !p.cwd;
+  const state = p.inBackground ? 'grid' : 'background';
+  if (p.bgBtn.dataset.state === state) return;
+  p.bgBtn.dataset.state = state;
+  p.bgBtn.innerHTML = p.inBackground ? ICON_TO_GRID : ICON_TO_BACKGROUND;
+  p.bgBtn.title = p.inBackground ? 'Open as a panel (⌘B)' : 'Move to the background, so it keeps working without a panel (⌘B)';
+}
+
+function toggleBackground(panel) {
+  if (!panel?.cwd) return;
+  setBackground(panel, !panel.inBackground, { focus: panel.inBackground });
+}
+
+// Moves a panel between the grid and the background. Its terminal keeps running either way.
+function setBackground(panel, on, { focus = false } = {}) {
+  if (on) {
+    if (zoomed === panel) zoomed = null;
+    panel.inBackground = true;
+    if (peeked !== panel) bgHost.append(panel.el);
+    if (focused === panel && peeked !== panel) {
+      const shown = visiblePanels();
+      setFocus(shown[shown.length - 1] || null);
+    }
+  } else {
+    if (peeked === panel) hidePeek(false);
+    panel.inBackground = false;
+    if (view === 'stack') showGrid();
+    const after = panels.find((p) => p.number > panel.number && !p.inBackground && p.el.parentNode === grid);
+    grid.insertBefore(panel.el, after ? after.el : null);
+    if (filterKey && panel.cwd && groupOf(panel).key !== filterKey) filterKey = null;
+    family = null;
+  }
+  applyLayout();
+  drawStatusLine();
+  if (panel.cwd) saveWorkspace();
+  if (focus) setFocus(panel);
+}
+
+function showPeek(panel) {
+  if (!panel.inBackground) return showPanel(panel);
+  if (peeked && peeked !== panel) hidePeek(false);
+  if (view === 'stack') showGrid();
+  peeked = panel;
+  peekBody.append(panel.el);
+  document.getElementById('peek-label').textContent = `Running in the background${panel.openedBy ? `, opened by terminal ${panel.openedBy}` : ''}`;
+  peekEl.hidden = false;
+  requestAnimationFrame(() => peekEl.classList.add('open'));
+  setFocus(panel);
+  drawSidebar();
+}
+
+function hidePeek(refocus = true) {
+  const panel = peeked;
+  if (!panel) return;
+  peeked = null;
+  peekEl.classList.remove('open');
+  peekEl.hidden = true;
+  if (panel.inBackground) bgHost.append(panel.el);
+  if (refocus || focused === panel) {
+    const shown = visiblePanels();
+    setFocus(shown[shown.length - 1] || null);
+  }
+  drawSidebar();
+}
+
+function toggleSidebar(open = !sidebarOpen) {
+  sidebarOpen = open;
+  drawSidebar();
+}
+
+// The sidebar lists the background sessions, grouped by the terminal that opened them.
+let sidebarDrawn = '';
+function drawSidebar() {
+  const bg = panels.filter((p) => p.inBackground && p.cwd).sort((a, b) => a.number - b.number);
+  // Show the list when the first background session appears, and hide it when the last one closes.
+  if (bg.length > backgroundCount) sidebarOpen = true;
+  if (!bg.length) sidebarOpen = false;
+  backgroundCount = bg.length;
+  sideBtn.hidden = bg.length === 0;
+  document.getElementById('side-count').textContent = String(bg.length);
+  sideBtn.classList.toggle('on', sidebarOpen);
+  sidebar.hidden = !sidebarOpen;
+
+  const groups = new Map();
+  for (const p of bg) {
+    const key = p.openedBy || 0;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(p);
+  }
+  const describe = (p) => {
+    if (!p.running) return ['off', 'Ended'];
+    if (p.needsApproval) return ['asking', 'Needs your approval'];
+    if (p.lightState === 'working') return ['working', 'Working'];
+    if (p.lightState === 'idle') return ['idle', 'Waiting for you'];
+    return ['', 'Starting'];
+  };
+  const parts = [];
+  for (const [opener, members] of groups) {
+    const from = panels.find((p) => p.number === opener);
+    parts.push({ head: opener ? `Opened by ⌘${opener}${from ? ' ' + (from.harnessName || baseName(from.cwd || '')) : ''}` : 'Moved here by you' });
+    for (const p of members) parts.push({ p, state: describe(p) });
+  }
+  const signature = JSON.stringify([
+    sidebarOpen,
+    peeked?.number,
+    parts.map((x) => (x.head ? x.head : [x.p.number, x.p.title, x.p.harnessName, x.state[0]])),
+  ]);
+  if (signature === sidebarDrawn) return;
+  sidebarDrawn = signature;
+
+  sideList.innerHTML = '';
+  for (const part of parts) {
+    if (part.head) {
+      sideList.append(el('div', 'side-group', part.head));
+      continue;
+    }
+    const { p, state } = part;
+    const row = el('button', 'side-row' + (p === peeked ? ' selected' : '') + (state[0] === 'asking' ? ' asking' : ''));
+    row.dataset.number = String(p.number);
+    row.title = `${p.title || p.name}. Click to look at it.`;
+    const top = el('span', 'side-top');
+    top.append(el('span', `side-light ${state[0]}`), el('span', 'side-title', p.title || p.name || `Terminal ${p.number}`));
+    const bottom = el('span', 'side-bottom');
+    const label = p.harnessName || baseName(p.cwd);
+    const pill = el('span', 'harness', label);
+    pill.style.setProperty('--hue', harnessColour(label));
+    bottom.append(el('span', 'side-num', p.number <= 9 ? `⌘${p.number}` : String(p.number)), pill, el('span', 'side-state', state[1]));
+    row.append(top, bottom);
+    sideList.append(row);
+  }
 }
 
 // ---------- Stack view (⌘S) ----------
@@ -1141,6 +1313,7 @@ function currentWorkspace() {
       title: p.title,
       harnessName: p.harnessName,
       openedBy: p.openedBy || null,
+      background: Boolean(p.inBackground),
     }));
 }
 
@@ -1161,7 +1334,11 @@ async function restoreWorkspace() {
   const known = new Set((await api.listSessions()).map((s) => s.id));
   for (const item of items) {
     if (!(await api.folderExists(item.cwd))) continue;
-    const panel = isUnstarted(focused) && focused.number === item.number ? focused : addPanel(item.number);
+    const panel =
+      !item.background && isUnstarted(focused) && focused.number === item.number
+        ? focused
+        : addPanel(item.number, { quiet: Boolean(item.background), inBackground: Boolean(item.background) });
+    panel.openedBy = item.openedBy || null;
     // A session that never got a message has no saved file, so start a fresh one in that folder instead.
     const resumeId = item.sessionId && known.has(item.sessionId) ? item.sessionId : null;
     await launch(panel, item.cwd, { resumeId, title: item.title, harnessName: item.harnessName, name: resumeId ? item.name : null });
@@ -1298,6 +1475,7 @@ function drawOwnLight(panel, act) {
 
 // The line at the bottom of the window counts the terminals, how many are working, and how many need you.
 function drawStatusLine() {
+  drawSidebar();
   const open = panels.filter((p) => p.cwd);
   statusLine.innerHTML = '';
   if (!open.length) return;
@@ -1315,6 +1493,8 @@ function drawStatusLine() {
   const waiting = count('idle');
   if (waiting > 0) item(`${waiting} waiting for you`, 'idle');
   if (asking > 0) item(asking === 1 ? '1 needs your approval' : `${asking} need your approval`, 'asking');
+  const hidden = open.filter((p) => p.inBackground).length;
+  if (hidden > 0) item(`${hidden} in the background`);
   const hint = el('span', 'status-hint');
   hint.innerHTML = '<kbd>⌘/</kbd> shortcuts';
   statusLine.append(hint);
@@ -1603,7 +1783,8 @@ function scanApprovals() {
   for (const p of panels) {
     const asking = readApproval(p);
     p.needsApproval = Boolean(asking);
-    const req = p === focused && visiblePanels().includes(p) ? null : asking;
+    const onScreen = visiblePanels().includes(p) || p === peeked;
+    const req = p === focused && onScreen ? null : asking;
     const shown = approvalCards.get(p);
     if (!req) {
       if (shown) {
@@ -1783,6 +1964,17 @@ document.getElementById('search-btn').addEventListener('click', openSearch);
 document.getElementById('settings-btn').addEventListener('click', openSettings);
 layoutBtn.addEventListener('click', toggleOddLayout);
 document.getElementById('stack-btn').addEventListener('click', toggleStack);
+sideBtn.addEventListener('click', () => toggleSidebar());
+document.getElementById('side-close').addEventListener('click', () => toggleSidebar(false));
+document.getElementById('peek-hide').addEventListener('click', () => hidePeek());
+document.getElementById('peek-open').addEventListener('click', () => peeked && setBackground(peeked, false, { focus: true }));
+sideList.addEventListener('click', (e) => {
+  const row = e.target.closest('[data-number]');
+  const panel = row && panels.find((p) => p.number === Number(row.dataset.number));
+  if (!panel) return;
+  if (peeked === panel) hidePeek();
+  else showPeek(panel);
+});
 filterChip.addEventListener('click', toggleStack);
 zoomChip.addEventListener('click', toggleZoom);
 navChip.addEventListener('click', () => (navStack.length ? leaveMentions() : leaveFamily()));
@@ -1797,6 +1989,8 @@ api.onMenu('check-update', checkUpdateNow);
 api.onMenu('close', () => view === 'grid' && closePanel(focused));
 api.onMenu('layout', toggleOddLayout);
 api.onMenu('zoom', toggleZoom);
+api.onMenu('sidebar', () => toggleSidebar());
+api.onMenu('to-background', () => focused && toggleBackground(focused));
 api.onMenu('stack', toggleStack);
 api.onMenu('restore', restoreWorkspace);
 api.onMenu('settings', openSettings);
@@ -1919,7 +2113,7 @@ api.onOpenRequest(async (id, req) => {
   try {
     const from = panels.find((p) => p.number === req.from);
     if (!from) throw new Error(`Terminal ${req.from} is not open.`);
-    const panel = addPanel(undefined, { background: true });
+    const panel = addPanel(undefined, { quiet: true, inBackground: Boolean(req.background) });
     panel.openedBy = from.number;
     const firstMessage =
       `Terminal ${from.number} (${from.name}) opened this terminal and asked for help with the task below. ` +
@@ -1931,7 +2125,8 @@ api.onOpenRequest(async (id, req) => {
       firstMessage,
     });
     if (panel.ptyId === null) throw new Error('The new terminal could not start Claude.');
-    showOpenedNotice(from, panel, req.task);
+    // A background session appears in the sidebar, so it needs no notice.
+    if (!panel.inBackground) showOpenedNotice(from, panel, req.task);
     api.openResult(id, { number: panel.number, name: panel.name, folder: req.folder });
   } catch (err) {
     api.openResult(id, { error: err.message });

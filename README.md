@@ -69,8 +69,10 @@ Add `--notes notes.md` to use your own release notes.
 | ⌥ drag | Select text in the terminal for ⌘C, even while Claude Code is using the mouse |
 | ⌘U | Choose files and add their paths to the selected terminal. You can also drag files onto a terminal |
 | ⌘F | Make the selected terminal fill the window. Press it again to show all terminals. While one fills the window, ⌘1 to ⌘9 switch which one |
+| ⌘B | Move the selected terminal to the background, or open a background session as a panel again |
+| ⌘J | Show or hide the list of sessions running in the background |
 | ⌘W | Close the selected terminal |
-| ⌘1 to ⌘9 | Jump to a terminal, or in the stack view open a harness |
+| ⌘1 to ⌘9 | Jump to a terminal, or in the stack view open a harness. For a background session, this shows it in the drawer |
 | ⌘L | Put the last panel at the bottom or on the side when an odd number are open |
 | @ | At the start of a word in Claude, list your other terminals to mention |
 | ⌘, | Settings |
@@ -114,7 +116,17 @@ Only you can answer these. Claude in one terminal cannot approve anything for an
 
 Claude in one terminal can open a new terminal when part of its work belongs in another harness or folder, or when a separate piece of work can run alongside its own. It uses the app's `open_terminal` tool, after checking where it can run with `list_harnesses`. The new terminal starts Claude in that harness, and its first message is the task, starting with which terminal asked for it. When it has finished, it sends the terminal that opened it a short report.
 
-The new terminal opens without changing what you are looking at, even when one terminal fills the window. A small notice at the top right says which terminal opened it, with a **Go to it** button.
+By default the new session runs in the background, so it does not take a panel. It appears in the Background list on the right of the window, under the terminal that opened it. Claude can ask for a normal panel instead, when you will want to watch the new session or type into it. A panel opened this way does not change what you are looking at, and a small notice at the top right says which terminal opened it, with a **Go to it** button.
+
+## Background sessions
+
+A background session is a normal Claude Code terminal that keeps running without a panel on screen. Sessions that Claude opens with `open_terminal` start in the background, and you can move any terminal there yourself with ⌘B or the button in its top bar.
+
+- **The Background list** on the right of the window shows each background session with its light, its harness and what it is doing: working, waiting for you, needs your approval, or ended. It opens when the first background session starts and closes when the last one ends. ⌘J or the **Background** button at the top shows or hides it.
+- **Looking at one.** Click a session in the list, or press its number, to show its terminal in a drawer over your panels. You can read it and type into it there. Click the arrow to hide the drawer again.
+- **Open as panel** in the drawer, or ⌘B, gives the session a panel of its own again.
+- **Questions.** When a background session asks for your approval, the card appears in the panel you are using, as it does for any other terminal.
+- Background sessions are saved with your other terminals, so ⌘R brings them back in the background.
 
 There are limits so terminals cannot keep opening each other:
 

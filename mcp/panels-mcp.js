@@ -114,6 +114,13 @@ const TOOLS = [
         },
         harness: { type: 'string', description: 'The name of a saved harness from list_harnesses.' },
         folder: { type: 'string', description: 'A folder path, if the work does not belong to a saved harness.' },
+        background: {
+          type: 'boolean',
+          description:
+            "Run the new session in the background, where it is listed in the app's sidebar instead of taking a " +
+            'panel on screen. The user can still look at it and answer its questions. Defaults to true. Set it to ' +
+            'false only when the user will want to watch the new session or type into it.',
+        },
       },
       required: ['task'],
     },
@@ -322,10 +329,12 @@ async function listHarnesses() {
 }
 
 async function openTerminal(args) {
-  const r = await askApp('/open', { from: SELF, task: args.task, harness: args.harness, folder: args.folder });
+  const background = args.background !== false;
+  const r = await askApp('/open', { from: SELF, task: args.task, harness: args.harness, folder: args.folder, background });
+  const where = background ? ' It runs in the background and is listed in the sidebar of the app.' : '';
   return (
-    `Opened terminal ${r.number} (${r.name}) in ${r.folder}. It has started on the task and will send you a report ` +
-    `with SendMessage when it has finished. Tell the user you opened terminal ${r.number} and why.`
+    `Opened terminal ${r.number} (${r.name}) in ${r.folder}.${where} It has started on the task and will send you a ` +
+    `report with SendMessage when it has finished. Tell the user you opened terminal ${r.number} and why.`
   );
 }
 

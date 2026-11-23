@@ -110,6 +110,7 @@ function panelsPrompt(number, name) {
     'Use the panels list_panels tool if you are not sure which terminal the user means.\n\n' +
     'You can also open a new terminal with the panels open_terminal tool. It starts a new Claude session in the ' +
     'harness or folder you choose and gives it your task, and that session reports back to you with SendMessage. ' +
+    'It runs in the background by default, listed in the sidebar of the app, so it does not take space on screen. ' +
     'Use it when part of the work belongs in a different harness or folder, or when a separate piece of work can ' +
     'run alongside yours. Do not use it for small tasks you can do yourself. Call list_harnesses first to choose ' +
     'where it should run, and tell the user which terminal you opened and why.\n\n' +
@@ -241,7 +242,7 @@ function placesForClaude() {
   };
 }
 
-async function openForClaude({ from, task, harness, folder }) {
+async function openForClaude({ from, task, harness, folder, background }) {
   task = String(task || '').trim();
   if (!task) throw new Error('Give the new terminal a task.');
   if (task.length > 6000) throw new Error('The task is too long. Keep it under 6,000 characters.');
@@ -284,7 +285,7 @@ async function openForClaude({ from, task, harness, folder }) {
   const id = crypto.randomUUID();
   const result = await new Promise((resolve) => {
     openWaiting.set(id, resolve);
-    win.webContents.send('panels:open-request', id, { from: requester.number, folder: dir, harnessName, task });
+    win.webContents.send('panels:open-request', id, { from: requester.number, folder: dir, harnessName, task, background: background !== false });
     setTimeout(() => resolve({ error: 'The app did not open the terminal in time.' }), 30000);
   });
   openWaiting.delete(id);
@@ -934,6 +935,8 @@ function buildMenu() {
         { label: 'Stack View', accelerator: 'CmdOrCtrl+S', click: () => send('menu:stack') },
         { label: 'Resume Terminals From Last Time', accelerator: 'CmdOrCtrl+R', click: () => send('menu:restore') },
         { label: 'Fill Window With Panel', accelerator: 'CmdOrCtrl+F', click: () => send('menu:zoom') },
+        { label: 'Show Background Sessions', accelerator: 'CmdOrCtrl+J', click: () => send('menu:sidebar') },
+        { label: 'Move Panel to the Background or Back', accelerator: 'CmdOrCtrl+B', click: () => send('menu:to-background') },
         { label: 'Move Odd Panel to Bottom or Side', accelerator: 'CmdOrCtrl+L', click: () => send('menu:layout') },
         { label: 'Settings', accelerator: 'CmdOrCtrl+,', click: () => send('menu:settings') },
       ],
