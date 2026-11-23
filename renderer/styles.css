@@ -1,19 +1,23 @@
 :root {
-  --bg: #0f1115;
-  --panel: #14171c;
-  --panel-head: #171a20;
-  --border: #22262e;
-  --text: #e2e5ea;
-  --muted: #7b828d;
-  --faint: #545b66;
+  --bg: #0c0e13;
+  --panel: #12151b;
+  --panel-head: #12151b;
+  --border: rgba(255, 255, 255, 0.07);
+  --border-strong: rgba(255, 255, 255, 0.12);
+  --text: #e4e7ec;
+  --muted: #838a95;
+  --faint: #59606b;
+  --hover: rgba(255, 255, 255, 0.05);
 
-  /* Deep dark blue used for every button */
-  --blue: #14254a;
-  --blue-hover: #1b3161;
-  --blue-border: #22396b;
-  --blue-text: #c5d3f2;
-  --focus: #2a4580;
-  --select: #172a52;
+  /* Buttons are plain grey. Blue is kept for the selected panel and the main action in a dialog or card. */
+  --btn: rgba(255, 255, 255, 0.06);
+  --btn-hover: rgba(255, 255, 255, 0.1);
+  --btn-border: rgba(255, 255, 255, 0.09);
+  --accent: #7f9dff;
+  --accent-hover: #95afff;
+  --accent-text: #b9c8ff;
+  --focus: rgba(127, 157, 255, 0.55);
+  --select: rgba(127, 157, 255, 0.14);
 }
 
 * { box-sizing: border-box; }
@@ -23,7 +27,7 @@ html, body {
   height: 100%;
   background: var(--bg);
   color: var(--text);
-  font: 12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font: 12.5px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   overflow: hidden;
 }
 
@@ -37,36 +41,85 @@ kbd {
 
 /* ---------- Toolbar ---------- */
 
+/* Three columns: icon buttons and notices on the left, the search bar in the middle, Settings on the right. */
 .toolbar {
   -webkit-app-region: drag;
-  height: 34px;
+  height: 42px;
   flex: none;
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr minmax(200px, 440px) 1fr;
   align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-  padding: 0 8px 0 80px; /* room for the window buttons */
+  gap: 10px;
+  padding: 0 10px 0 80px; /* room for the window buttons */
 }
-.toolbar-buttons { display: flex; gap: 4px; -webkit-app-region: no-drag; }
+.toolbar button { -webkit-app-region: no-drag; }
+.toolbar-left { display: flex; align-items: center; gap: 2px; min-width: 0; }
+.toolbar-buttons { display: flex; align-items: center; gap: 6px; justify-self: end; }
 
-.btn {
-  font: 11.5px -apple-system, BlinkMacSystemFont, sans-serif;
-  color: var(--blue-text);
-  background: var(--blue);
-  border: 1px solid var(--blue-border);
-  border-radius: 5px;
-  padding: 2px 8px;
-  height: 22px;
+.ibtn {
+  width: 28px;
+  height: 28px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  color: var(--muted);
+  background: transparent;
+  border: none;
+  border-radius: 7px;
   cursor: pointer;
 }
-.btn:hover { background: var(--blue-hover); }
-.btn kbd { color: #7f93c2; padding: 0 0 0 2px; }
+.ibtn:hover { background: var(--btn-hover); color: var(--text); }
+.ibtn svg { width: 16px; height: 16px; }
+.ibtn[hidden] { display: none; }
+
+.searchbar {
+  height: 28px;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 6px 0 10px;
+  font: 12.5px -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--muted);
+  background: var(--btn);
+  border: 1px solid var(--btn-border);
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+}
+.searchbar:hover { border-color: var(--border-strong); color: var(--text); }
+.searchbar svg { width: 14px; height: 14px; flex: none; }
+.searchbar span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.searchbar kbd, .status-hint kbd {
+  font-size: 10.5px;
+  color: var(--muted);
+  border: 1px solid var(--btn-border);
+  border-radius: 5px;
+  padding: 1px 5px;
+}
+
+.btn {
+  font: 500 12px -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--text);
+  background: var(--btn);
+  border: 1px solid var(--btn-border);
+  border-radius: 7px;
+  padding: 0 10px;
+  height: 26px;
+  cursor: pointer;
+}
+.btn:hover { background: var(--btn-hover); }
+.btn kbd { color: var(--muted); padding: 0 0 0 2px; }
+.btn.primary { background: var(--accent); border-color: transparent; color: #0b1020; font-weight: 600; }
+.btn.primary:hover { background: var(--accent-hover); }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 .link-btn {
   font: inherit;
   background: none;
   border: none;
-  color: #8fa8dc;
+  color: var(--accent-text);
   cursor: pointer;
   padding: 0;
 }
@@ -77,8 +130,8 @@ kbd {
   flex: 1;
   min-height: 0;
   display: grid;
-  gap: 4px;
-  padding: 0 4px 4px;
+  gap: 6px;
+  padding: 0 6px 0;
 }
 
 .panel {
@@ -88,40 +141,57 @@ kbd {
   flex-direction: column;
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 10px;
   overflow: hidden;
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
-.panel.focused { border-color: var(--focus); }
+.panel.focused { border-color: var(--focus); box-shadow: 0 0 0 3px rgba(127, 157, 255, 0.1); }
 
 .panel-head {
   flex: none;
   display: flex;
   align-items: center;
-  gap: 7px;
-  height: 24px;
-  padding: 0 4px 0 9px;
-  background: var(--panel-head);
+  gap: 8px;
+  height: 32px;
+  padding: 0 5px 0 10px;
+  background: transparent;
   border-bottom: 1px solid var(--border);
-  font-size: 11.5px;
+  font-size: 12px;
 }
-.panel-head .num { color: var(--faint); font-variant-numeric: tabular-nums; }
-.panel-head .title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 50%; }
+.panel-head .num {
+  font-size: 10.5px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  border: 1px solid var(--btn-border);
+  border-radius: 5px;
+  padding: 0 5px;
+  line-height: 16px;
+  flex: none;
+}
+.panel-head .title { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 50%; }
 .panel-head .path { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; }
 .panel-head .status { color: var(--muted); }
-.panel-head .close {
+
+/* Fill and close buttons appear when the mouse is over the panel, or when it is selected. */
+.head-actions { display: flex; gap: 1px; flex: none; opacity: 0; transition: opacity 0.12s; }
+.panel:hover .head-actions, .panel.focused .head-actions { opacity: 1; }
+.head-btn {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  padding: 0;
   background: none;
   border: none;
+  border-radius: 6px;
   color: var(--faint);
-  font-size: 14px;
-  line-height: 1;
-  padding: 1px 5px;
-  border-radius: 4px;
   cursor: pointer;
 }
-.panel-head .close:hover { background: var(--blue); color: var(--blue-text); }
+.head-btn:hover { background: var(--btn-hover); color: var(--text); }
+.head-btn svg { width: 13px; height: 13px; }
 
 .panel-body { flex: 1; min-height: 0; position: relative; }
-.term-host { position: absolute; inset: 6px 4px 4px 8px; }
+.term-host { position: absolute; inset: 8px 6px 6px 10px; }
 
 /* ---------- Keyboard picker, shared by new panels and the session search ---------- */
 
@@ -141,8 +211,8 @@ kbd {
   color: var(--text);
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 8px 10px;
+  border-radius: 8px;
+  padding: 9px 12px;
   outline: none;
 }
 .cmd-input:focus, .palette input:focus { border-color: var(--focus); }
@@ -160,10 +230,11 @@ kbd {
   display: flex;
   align-items: baseline;
   gap: 10px;
-  padding: 5px 8px;
-  border-radius: 5px;
+  padding: 6px 9px;
+  border-radius: 7px;
   cursor: pointer;
 }
+.item:hover { background: var(--hover); }
 .item.selected { background: var(--select); }
 .item .label { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .item .detail { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; }
@@ -181,7 +252,7 @@ kbd {
 
 .empty {
   position: absolute;
-  inset: 34px 0 0 0;
+  inset: 42px 0 26px 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -189,7 +260,7 @@ kbd {
 }
 .empty[hidden] { display: none; }
 .shortcuts { display: grid; grid-template-columns: auto auto; gap: 7px 14px; color: var(--muted); font-size: 12.5px; }
-.shortcuts kbd { color: var(--blue-text); font-size: 12px; text-align: right; }
+.shortcuts kbd { color: var(--text); font-size: 12px; text-align: right; }
 
 /* ---------- Dialogs ---------- */
 
@@ -198,11 +269,12 @@ dialog {
   max-width: calc(100vw - 32px);
   background: var(--panel);
   color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
   padding: 18px 20px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
 }
-dialog::backdrop { background: #0008; }
+dialog::backdrop { background: rgba(5, 6, 9, 0.55); backdrop-filter: blur(3px); }
 dialog h2 { margin: 0 0 12px; font-size: 15px; }
 
 dialog.palette {
@@ -224,19 +296,20 @@ legend { font-weight: 600; margin-bottom: 5px; }
   font: inherit;
   color: var(--text);
   background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  padding: 6px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  padding: 6px 9px;
 }
+.field input:focus, .field textarea:focus { outline: none; border-color: var(--focus); }
 .field textarea { resize: vertical; line-height: 1.4; }
 .field input[type="number"] { width: 60px; }
 .field .link-btn { align-self: flex-start; font-size: 11px; }
 .field[hidden] { display: none; }
-code { font-family: "SF Mono", Menlo, monospace; font-size: 11px; color: var(--blue-text); }
+code { font-family: "SF Mono", Menlo, monospace; font-size: 11px; color: var(--accent-text); }
 
 .harness-list { display: flex; flex-direction: column; gap: 2px; }
 .harness-row { display: flex; gap: 10px; align-items: baseline; padding: 3px 0; }
-.harness-row .label { font-family: "SF Mono", Menlo, monospace; color: var(--blue-text); }
+.harness-row .label { font-family: "SF Mono", Menlo, monospace; color: var(--accent-text); }
 .harness-row .detail { color: var(--muted); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .harness-add { display: flex; gap: 6px; align-items: center; }
 .harness-add input { width: 140px; }
@@ -247,16 +320,21 @@ code { font-family: "SF Mono", Menlo, monospace; font-size: 11px; color: var(--b
 
 .chip {
   -webkit-app-region: no-drag;
-  margin-right: auto;
-  font: 11.5px -apple-system, BlinkMacSystemFont, sans-serif;
-  color: var(--blue-text);
-  background: none;
-  border: 1px solid var(--blue-border);
-  border-radius: 11px;
-  padding: 2px 10px;
+  margin-left: 8px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 12px -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--accent-text);
+  background: var(--select);
+  border: 1px solid transparent;
+  border-radius: 13px;
+  height: 24px;
+  padding: 0 10px;
   cursor: pointer;
 }
-.chip:hover { background: var(--blue); }
+.chip:hover { border-color: var(--focus); }
 .chip[hidden] { display: none; }
 #filter-name { font-weight: 600; }
 
@@ -283,14 +361,14 @@ code { font-family: "SF Mono", Menlo, monospace; font-size: 11px; color: var(--b
 .card {
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 7px;
-  padding: 10px 12px 8px;
+  border-radius: 10px;
+  padding: 12px 14px 10px;
   cursor: pointer;
 }
 .card:hover { border-color: var(--focus); }
 .card-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; }
 .card-head .num { color: var(--faint); font-variant-numeric: tabular-nums; }
-.card-head .name { font-weight: 600; font-family: "SF Mono", Menlo, monospace; color: var(--blue-text); }
+.card-head .name { font-weight: 600; font-family: "SF Mono", Menlo, monospace; color: var(--accent-text); }
 .card-head .path { color: var(--muted); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card-head .count { color: var(--muted); white-space: nowrap; }
 
@@ -323,7 +401,7 @@ code { font-family: "SF Mono", Menlo, monospace; font-size: 11px; color: var(--b
   font-size: 12px;
   color: var(--muted);
 }
-.shortcut-guide kbd { color: var(--blue-text); font-size: 11.5px; padding: 0; }
+.shortcut-guide kbd { color: var(--accent-text); font-size: 11.5px; padding: 0; }
 .field .guide-sub { font-weight: 600; font-size: 11px; color: var(--faint); margin-top: 8px; text-transform: uppercase; letter-spacing: 0.05em; }
 
 /* ---------- Mentioned sessions in the panel's top bar ---------- */
@@ -334,15 +412,15 @@ code { font-family: "SF Mono", Menlo, monospace; font-size: 11px; color: var(--b
   align-items: center;
   gap: 5px;
   font: 11px "SF Mono", Menlo, monospace;
-  color: var(--blue-text);
-  background: var(--blue);
-  border: 1px solid var(--blue-border);
+  color: var(--accent-text);
+  background: var(--btn);
+  border: 1px solid var(--btn-border);
   border-radius: 9px;
   padding: 0 7px;
   height: 17px;
   cursor: pointer;
 }
-.mention:hover { background: var(--blue-hover); }
+.mention:hover { background: var(--btn-hover); }
 .mention .light { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); }
 .mention.working .light { background: #3fb950; box-shadow: 0 0 5px #3fb950aa; }
 .mention.idle .light { background: #e3a13b; box-shadow: 0 0 5px #e3a13b88; }
@@ -390,14 +468,12 @@ code { font-family: "SF Mono", Menlo, monospace; font-size: 11px; color: var(--b
 }
 .panel-head .harness:empty { display: none; }
 .panel-head .title { font-weight: 500; }
-.panel:not(.focused) .panel-head { opacity: 0.62; }
-.panel:not(.focused) .panel-head:hover { opacity: 0.9; }
-.panel.focused .panel-head { background: #1a2340; }
-.panel.focused { box-shadow: 0 0 0 1px var(--focus); }
+.panel:not(.focused) .panel-head { opacity: 0.7; }
+.panel:not(.focused) .panel-head:hover { opacity: 0.95; }
 
 /* Mentioned sessions are marked with an arrow and kept quiet, so they don't look like the current harness. */
 .mention { background: transparent; border-style: dashed; color: var(--muted); }
-.mention:hover { color: var(--blue-text); }
+.mention:hover { color: var(--accent-text); }
 
 /* ---------- Subagents and expert suggestions ---------- */
 
@@ -441,16 +517,17 @@ code { font-family: "SF Mono", Menlo, monospace; font-size: 11px; color: var(--b
   right: 16px;
   bottom: 54px;
   width: min(420px, calc(100% - 32px));
-  background: #121726ee;
-  border: 1px solid var(--blue-border);
-  border-radius: 8px;
+  background: rgba(20, 24, 34, 0.92);
+  backdrop-filter: blur(14px);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
   padding: 5px;
   z-index: 6;
   box-shadow: 0 6px 24px #0008;
   font-size: 12px;
 }
 .mention-list-head { color: var(--faint); font-size: 10.5px; padding: 2px 6px 4px; }
-.mention-row { display: flex; align-items: center; gap: 7px; padding: 4px 6px; border-radius: 5px; cursor: pointer; }
+.mention-row { display: flex; align-items: center; gap: 7px; padding: 5px 7px; border-radius: 7px; cursor: pointer; }
 .mention-row.selected, .mention-row:hover { background: var(--select); }
 .mention-row .num { color: var(--faint); font-variant-numeric: tabular-nums; width: 14px; text-align: right; }
 .mention-row .own-light { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); flex: none; }
@@ -465,12 +542,13 @@ code { font-family: "SF Mono", Menlo, monospace; font-size: 11px; color: var(--b
   right: 14px;
   bottom: 64px; /* above Claude's input line */
   width: min(360px, calc(100% - 28px));
-  background: #17150fee;
-  border: 1px solid #8a6d2a;
-  border-radius: 7px;
-  padding: 7px 9px;
+  background: rgba(26, 22, 14, 0.9);
+  backdrop-filter: blur(14px);
+  border: 1px solid rgba(232, 176, 74, 0.5);
+  border-radius: 10px;
+  padding: 9px 11px;
   z-index: 7;
-  box-shadow: 0 6px 22px #0009;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
   font-size: 11.5px;
 }
 body > .approval-card { position: fixed; }
@@ -491,8 +569,8 @@ body > .approval-card { position: fixed; }
 .approval-more { color: var(--muted); margin-top: 5px; }
 .approval-choices { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
 .approval-choice {
-  height: 20px;
-  padding: 0 8px;
+  height: 24px;
+  padding: 0 9px;
   font-size: 11px;
   max-width: 100%;
   white-space: nowrap;
@@ -505,33 +583,56 @@ body > .approval-card { position: fixed; }
 
 /* ---------- Scroll bars ---------- */
 
-/* Thin dark blue scroll bars for lists and dialogs, such as the ⌘K list, instead of the white system ones. */
+/* Thin grey scroll bars for lists and dialogs, such as the ⌘K list, instead of the white system ones. */
 :root { color-scheme: dark; }
 ::-webkit-scrollbar { width: 8px; height: 8px; background: transparent; }
 ::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }
 ::-webkit-scrollbar-thumb {
-  background: var(--blue-border);
+  background: rgba(255, 255, 255, 0.14);
   border: 2px solid transparent;
   border-radius: 4px;
   background-clip: padding-box;
 }
-::-webkit-scrollbar-thumb:hover { background: var(--focus); border: 2px solid transparent; background-clip: padding-box; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.24); border: 2px solid transparent; background-clip: padding-box; }
 
 /* ---------- Notice when Claude opens a terminal ---------- */
 
 .opened-notice {
   position: fixed;
-  top: 78px; /* below the top bars, so it does not cover a close button */
+  top: 86px; /* below the top bars, so it does not cover a close button */
   right: 14px;
   width: min(360px, calc(100% - 28px));
-  background: #121a2ef0;
-  border: 1px solid var(--blue-border);
-  border-radius: 7px;
-  padding: 7px 9px;
+  background: rgba(20, 24, 34, 0.92);
+  backdrop-filter: blur(14px);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  padding: 9px 11px;
   z-index: 8;
-  box-shadow: 0 6px 22px #0009;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
   font-size: 11.5px;
 }
-.opened-notice .approval-head { color: var(--blue-text); }
+.opened-notice .approval-head { color: var(--accent-text); }
 .opened-notice .link-btn + .link-btn { margin-left: 4px; }
 .opened-notice .approval-question { font-weight: 400; color: var(--muted); }
+
+/* ---------- Status line at the bottom of the window ---------- */
+
+.statusline {
+  height: 26px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 0 14px;
+  font-size: 11.5px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+}
+.status-item { display: inline-flex; align-items: center; gap: 6px; }
+.status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); }
+.status-item.working .status-dot { background: #3fb950; }
+.status-item.idle .status-dot { background: #e3a13b; }
+.status-item.asking { color: #e7c98a; }
+.status-item.asking .status-dot { background: #e3a13b; box-shadow: 0 0 0 3px rgba(227, 161, 59, 0.2); }
+.status-hint { margin-left: auto; color: var(--faint); }

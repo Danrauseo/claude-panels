@@ -90,13 +90,15 @@ Claude uses the CLAUDE.md and settings it finds in the folder you start it in. Y
 
 ## What each terminal shows
 
-Each terminal's top bar shows its number, a light, its harness and what the session is about:
+Each terminal's top bar shows its shortcut (⌘1 to ⌘9), a light, its harness and what the session is about. Buttons to fill the window and to close the terminal appear when you move the mouse over a terminal:
 
 - **The light** is green while Claude is working, orange when it is waiting for you, and grey once the session has ended.
-- **The harness** is shown in its own colour. Each harness always gets the same colour, so you can tell at a glance which one a terminal is in. The terminal you are using has a brighter top bar than the others.
+- **The harness** is shown in its own colour. Each harness always gets the same colour, so you can tell at a glance which one a terminal is in. The terminal you are using has a blue outline, and the others have dimmer top bars.
 - **Subagents.** When Claude starts subagents, a small spinning label shows how many are working, for example "2 subagents". Hover over it to see what each one is doing and how long it has been running. It goes away when they finish.
 - **What it is about** comes from a name you set with `/rename`. Otherwise the app asks Claude's smallest model, Haiku, for a short title after your first message, and refreshes it at most every 15 minutes as you give new requests. This costs a tiny amount per session. You can turn it off in Settings. (Claude Code writes its own titles only for sessions without a name, and the app names each session after its panel so that `@2` works.)
 - A name you set with `/rename` also becomes the name other sessions use to reach that terminal.
+
+The line at the bottom of the window counts your terminals, how many are working, how many are waiting for you, and how many need your approval.
 
 ## Approving from the terminal you are using
 

@@ -4,7 +4,7 @@ const api = window.panelsApi;
 const grid = document.getElementById('grid');
 const emptyState = document.getElementById('empty');
 const layoutBtn = document.getElementById('layout-btn');
-const layoutLabel = document.getElementById('layout-label');
+const statusLine = document.getElementById('statusline');
 const filterChip = document.getElementById('filter-chip');
 const filterName = document.getElementById('filter-name');
 const zoomChip = document.getElementById('zoom-chip');
@@ -31,11 +31,11 @@ let family = null; // { mother, members }
 let restorable = []; // panels open when the app last closed, restored with ⌘R
 
 const TERM_THEME = {
-  background: '#14171c',
-  foreground: '#e2e5ea',
-  cursor: '#8fa8dc',
-  cursorAccent: '#14171c',
-  selectionBackground: '#22396b',
+  background: '#12151b',
+  foreground: '#e4e7ec',
+  cursor: '#9fb4ff',
+  cursorAccent: '#12151b',
+  selectionBackground: '#2b3a63',
 };
 
 // ---------- Helpers ----------
@@ -198,7 +198,9 @@ function applyLayout() {
 
   emptyState.hidden = panels.length > 0 || view === 'stack';
   layoutBtn.hidden = !odd || view === 'stack' || Boolean(zoomed);
-  layoutLabel.textContent = bottom ? 'Last panel: bottom' : 'Last panel: side';
+  layoutBtn.title = bottom
+    ? 'The last panel is at the bottom. Click to move it to the side (⌘L)'
+    : 'The last panel is at the side. Click to move it to the bottom (⌘L)';
 
   let cols;
   let rows;
@@ -220,7 +222,7 @@ function applyLayout() {
     p.el.style.gridColumn = last ? (bottom ? '1 / -1' : `${cols}`) : '';
     p.el.style.gridRow = last ? (bottom ? `${rows}` : '1 / -1') : '';
     // Numbers stay the same when a harness filter is on, so ⌘2 and @2 always mean the same terminal.
-    p.head.querySelector('.num').textContent = `${p.number}`;
+    p.head.querySelector('.num').textContent = p.number <= 9 ? `⌘${p.number}` : `${p.number}`;
   }
 
   if (zoomed && !panels.includes(zoomed)) zoomed = null;
@@ -315,13 +317,25 @@ function addPanel(wantedNumber, { background = false } = {}) {
     el('span', 'mentions'),
     el('span', 'status')
   );
-  const closeBtn = el('button', 'close', '×');
+  // Fill and close buttons show when the mouse is over the panel, or when the panel is selected.
+  const actions = el('span', 'head-actions');
+  const fillBtn = el('button', 'head-btn');
+  fillBtn.title = 'Fill the window, or show all panels again (⌘F)';
+  fillBtn.innerHTML = '<svg viewBox="0 0 16 16"><path d="M9.5 2.5h4v4M6.5 13.5h-4v-4M13.5 2.5 9 7M2.5 13.5 7 9" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  fillBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    setFocus(panel);
+    toggleZoom();
+  });
+  const closeBtn = el('button', 'head-btn close');
   closeBtn.title = 'Close (⌘W)';
+  closeBtn.innerHTML = '<svg viewBox="0 0 16 16"><path d="M4.5 4.5l7 7M11.5 4.5l-7 7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>';
   closeBtn.addEventListener('click', (e) => {
     e.stopPropagation();
     closePanel(panel);
   });
-  panel.head.append(closeBtn);
+  actions.append(fillBtn, closeBtn);
+  panel.head.append(actions);
   panel.body = el('div', 'panel-body');
   panel.el.append(panel.head, panel.body);
   panel.el.addEventListener('mousedown', () => {
@@ -1239,7 +1253,7 @@ let mentionsRefreshing = false;
 async function refreshMentions() {
   if (mentionsRefreshing || view !== 'grid') return;
   const started = panels.filter((p) => p.sessionId && p.cwd);
-  if (!started.length) return;
+  if (!started.length) return drawStatusLine();
   mentionsRefreshing = true;
   try {
     const refs = await api.sessionMentions(started.map((p) => p.sessionId));
@@ -1267,6 +1281,7 @@ async function refreshMentions() {
       drawOwnLight(p, activity[p.sessionId] || {});
       drawAgents(p, activity[p.sessionId]?.agents || []);
     }
+    drawStatusLine();
   } finally {
     mentionsRefreshing = false;
   }
@@ -1277,7 +1292,32 @@ function drawOwnLight(panel, act) {
   const light = panel.head.querySelector('.own-light');
   const state = !panel.cwd ? '' : !panel.running ? 'off' : act.pending || act.working ? 'working' : 'idle';
   light.className = `own-light ${state}`;
+  panel.lightState = state;
   light.title = { working: 'Claude is working', idle: 'Claude is waiting for you', off: 'This session has ended', '': '' }[state];
+}
+
+// The line at the bottom of the window counts the terminals, how many are working, and how many need you.
+function drawStatusLine() {
+  const open = panels.filter((p) => p.cwd);
+  statusLine.innerHTML = '';
+  if (!open.length) return;
+  const count = (state) => open.filter((p) => p.running && p.lightState === state && !p.needsApproval).length;
+  const asking = open.filter((p) => p.running && p.needsApproval).length;
+  const item = (text, cls) => {
+    const span = el('span', 'status-item' + (cls ? ' ' + cls : ''));
+    if (cls) span.append(el('span', 'status-dot'));
+    span.append(el('span', null, text));
+    statusLine.append(span);
+  };
+  item(open.length === 1 ? '1 terminal' : `${open.length} terminals`);
+  const working = count('working');
+  if (working > 0) item(`${working} working`, 'working');
+  const waiting = count('idle');
+  if (waiting > 0) item(`${waiting} waiting for you`, 'idle');
+  if (asking > 0) item(asking === 1 ? '1 needs your approval' : `${asking} need your approval`, 'asking');
+  const hint = el('span', 'status-hint');
+  hint.innerHTML = '<kbd>⌘/</kbd> shortcuts';
+  statusLine.append(hint);
 }
 
 function drawMentions(panel, children, activity) {
@@ -1561,7 +1601,9 @@ const approvalCards = new Map(); // panel -> { key, card }
 
 function scanApprovals() {
   for (const p of panels) {
-    const req = p === focused && visiblePanels().includes(p) ? null : readApproval(p);
+    const asking = readApproval(p);
+    p.needsApproval = Boolean(asking);
+    const req = p === focused && visiblePanels().includes(p) ? null : asking;
     const shown = approvalCards.get(p);
     if (!req) {
       if (shown) {
@@ -1583,6 +1625,7 @@ function scanApprovals() {
     card.style.bottom = `${64 + offset}px`;
     offset += card.offsetHeight + 8;
   }
+  drawStatusLine();
 }
 
 function buildApprovalCard(p, req) {
@@ -1606,6 +1649,7 @@ function buildApprovalCard(p, req) {
   for (const o of req.options) {
     const short = o.label.split(' · ')[0];
     const b = el('button', 'btn approval-choice', `${o.n}. ${short.length > 38 ? short.slice(0, 38) + '…' : short}`);
+    if (String(o.n) === '1') b.classList.add('primary');
     b.title = o.label;
     // Choices that need you to type, such as "Type something", take you to that terminal.
     const needsTyping = /^(Type something|Chat about this)/i.test(o.label);

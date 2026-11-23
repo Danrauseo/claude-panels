@@ -970,7 +970,7 @@ function createWindow() {
     height: 900,
     minWidth: 600,
     minHeight: 400,
-    backgroundColor: '#0f1115',
+    backgroundColor: '#0c0e13',
     titleBarStyle: 'hiddenInset',
     title: 'Claude Panels',
     webPreferences: {
