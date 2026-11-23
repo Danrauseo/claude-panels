@@ -91,6 +91,7 @@ function cleanEnv() {
 const registryFile = () => path.join(app.getPath('userData'), 'panels.json');
 const cvsFile = () => path.join(app.getPath('userData'), 'cvs.json');
 const mcpScript = path.join(__dirname, 'mcp', 'panels-mcp.js').replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`);
+const gateScript = path.join(__dirname, 'mcp', 'gate-hook.js').replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`);
 
 // The list of open terminals that the tool server reads.
 function writeRegistry(workspace) {
@@ -111,6 +112,9 @@ function panelsPrompt(number, name) {
     'You can also open a new terminal with the panels open_terminal tool. It starts a new Claude session in the ' +
     'harness or folder you choose and gives it your task, and that session reports back to you with SendMessage. ' +
     'It runs in the background by default, listed in the sidebar of the app, so it does not take space on screen. ' +
+    'The terminals you open form your job. Name it with set_job, which can also make it open to other terminals ' +
+    '(it is closed by default). When every terminal in the job has reported back and you have told the user ' +
+    'the result, call wrap_up_job to close them. ' +
     'Use it when part of the work belongs in a different harness or folder, or when a separate piece of work can ' +
     'run alongside yours. Do not use it for small tasks you can do yourself. Call list_harnesses first to choose ' +
     'where it should run, and tell the user which terminal you opened and why.\n\n' +
@@ -165,6 +169,8 @@ function startTerminal({ cwd, cols, rows, resumeId, name, number, firstMessage }
   claudeLine += ' --name "$CLAUDE_PANELS_NAME"';
   claudeLine += ' --mcp-config "$CLAUDE_PANELS_MCP" --allowedTools mcp__panels';
   claudeLine += ' --append-system-prompt "$CLAUDE_PANELS_PROMPT"';
+  // Before Claude messages another session, a hook asks the app whether that session is in a closed job.
+  claudeLine += ' --settings "$CLAUDE_PANELS_SETTINGS"';
   if (resumeId) {
     if (!/^[\w-]+$/.test(resumeId)) throw new Error('Not a valid session id');
     claudeLine += ` --resume ${resumeId}`;
@@ -188,6 +194,9 @@ function startTerminal({ cwd, cols, rows, resumeId, name, number, firstMessage }
     CLAUDE_PANELS_PROMPT: prompt,
     CLAUDE_PANELS_NAME: name,
     CLAUDE_PANELS_MCP: JSON.stringify(mcpConfig),
+    CLAUDE_PANELS_SETTINGS: JSON.stringify(gateSettings()),
+    CLAUDE_PANELS_SELF: String(number),
+    ...(control ? { CLAUDE_PANELS_CONTROL: control.url, CLAUDE_PANELS_TOKEN: control.token } : {}),
     ...(firstMessage && !resumeId ? { CLAUDE_PANELS_FIRST: String(firstMessage).slice(0, 8000) } : {}),
   };
 
@@ -295,6 +304,34 @@ async function openForClaude({ from, task, harness, folder, background }) {
 
 ipcMain.on('panels:open-result', (_e, id, result) => openWaiting.get(id)?.(result || {}));
 
+// The settings each Claude session starts with: a hook that runs before SendMessage. The hook asks the
+// app whether the message may go, because the session it is going to may be in a closed job.
+function gateSettings() {
+  const command = `ELECTRON_RUN_AS_NODE=1 "${process.execPath}" "${gateScript}"`;
+  return {
+    hooks: {
+      PreToolUse: [{ matcher: 'SendMessage', hooks: [{ type: 'command', command, timeout: 300 }] }],
+    },
+  };
+}
+
+// Questions for the window about jobs: whether one session may use another, setting up a job, and
+// wrapping one up. The window holds the jobs, so main passes the question on and waits for the answer.
+const windowWaiting = new Map(); // request id -> resolve function
+async function askWindow(kind, payload, timeoutMs = 30000) {
+  if (!win || win.isDestroyed()) throw new Error('The Claude Panels window is not open.');
+  const id = crypto.randomUUID();
+  const result = await new Promise((resolve) => {
+    windowWaiting.set(id, resolve);
+    win.webContents.send('panels:app-request', id, kind, payload);
+    setTimeout(() => resolve({ error: 'The app did not answer in time.' }), timeoutMs);
+  });
+  windowWaiting.delete(id);
+  if (result.error) throw new Error(result.error);
+  return result;
+}
+ipcMain.on('panels:app-result', (_e, id, result) => windowWaiting.get(id)?.(result || {}));
+
 function startControlServer() {
   const token = crypto.randomBytes(24).toString('hex');
   const server = http.createServer(async (req, res) => {
@@ -312,6 +349,10 @@ function startControlServer() {
       const args = body ? JSON.parse(body) : {};
       if (req.url === '/places') return reply(200, placesForClaude());
       if (req.url === '/open') return reply(200, await openForClaude(args));
+      // A gate question waits for the user, so it has longer to answer.
+      if (req.url === '/gate') return reply(200, await askWindow('gate', args, 280000));
+      if (req.url === '/job') return reply(200, await askWindow('job', args));
+      if (req.url === '/wrap-up') return reply(200, await askWindow('wrap-up', args, 60000));
       reply(404, { error: 'Unknown request.' });
     } catch (err) {
       reply(400, { error: err.message });

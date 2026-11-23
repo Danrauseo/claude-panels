@@ -40,6 +40,10 @@ let restorable = []; // panels open when the app last closed, restored with ⌘R
 let peeked = null; // the background panel shown in the peek drawer
 let sidebarOpen = false;
 let backgroundCount = 0;
+// A job is the set of terminals one terminal (its owner) has opened. Its owner number maps to
+// { title, access: 'closed' | 'open', requests: [], wrapping }. The members are the open panels whose
+// openedBy is the owner. In a closed job, other terminals need the user's permission to use a member.
+const jobs = new Map();
 
 const TERM_THEME = {
   background: '#12151b',
@@ -398,9 +402,9 @@ function addPanel(wantedNumber, { quiet = false, inBackground = false } = {}) {
   return panel;
 }
 
-function closePanel(panel) {
+function closePanel(panel, { confirmed = false } = {}) {
   if (!panel) return;
-  if (panel.running && !confirm('Close this terminal? Anything running in it, including Claude, will stop.')) return;
+  if (!confirmed && panel.running && !confirm('Close this terminal? Anything running in it, including Claude, will stop.')) return;
   if (panel.ptyId !== null) {
     api.kill(panel.ptyId);
     byPtyId.delete(panel.ptyId);
@@ -415,6 +419,10 @@ function closePanel(panel) {
   if (filterKey && !panels.some((p) => p.cwd && groupOf(p).key === filterKey)) filterKey = null;
   applyLayout();
   const shown = visiblePanels();
+  // A job ends when its owner closes or its last member closes.
+  if (jobs.has(panel.number)) endJob(panel.number);
+  const owner = panel.openedBy;
+  if (owner && jobs.has(owner) && !jobs.get(owner).wrapping && !panels.some((p) => p.openedBy === owner)) endJob(owner);
   if (focused === panel || !panels.includes(focused)) setFocus(shown.includes(panels[i]) ? panels[i] : shown[shown.length - 1] || null);
   saveWorkspace();
   drawStatusLine();
@@ -1098,8 +1106,10 @@ function toggleSidebar(open = !sidebarOpen) {
 // branch, the sessions it opened hang under it, and each session's working subagents hang under that session.
 // New rows grow out of their parent's row, and finished rows move back up into it before they go.
 const TREE_INDENT = 18;
-const TREE_ROW = { coord: 32, session: 46, agent: 28 }; // row heights
-const TREE_MARK = { coord: 16, session: 14, agent: 14 }; // where the mark sits inside each row
+const TREE_ROW = { coord: 32, session: 46, agent: 28, job: 92 }; // row heights
+const TREE_MARK = { coord: 16, session: 14, agent: 14, job: 17 }; // where the mark sits inside each row
+const REQUEST_HEIGHT = 66; // each question about a closed job adds this much to the job's row
+const rowHeight = (n) => TREE_ROW[n.kind] + (n.kind === 'job' ? (jobs.get(n.panel.number)?.requests.length || 0) * REQUEST_HEIGHT : 0);
 const TREE_GAP = 2;
 const treeRows = new Map(); // key -> { el, elbow, node, y, drawn }
 let sidebarHideTimer = null;
@@ -1116,19 +1126,26 @@ function sessionState(p) {
 function treeNodes() {
   const bg = panels.filter((p) => p.inBackground && p.cwd);
   const nodes = [];
+  const owners = new Set(
+    [...jobs.keys()].filter((n) => panels.some((p) => p.number === n && p.cwd) && panels.some((p) => p.cwd && p.openedBy === n))
+  );
   const add = (p, depth, parent) => {
-    const kind = p.inBackground ? 'session' : 'coord';
+    const isJob = owners.has(p.number);
+    const kind = isJob ? 'job' : p.inBackground ? 'session' : 'coord';
     nodes.push({ key: 'p' + p.number, kind, depth, parent, panel: p });
     for (const a of p.agents || []) {
       nodes.push({ key: `a${p.number}:${a.id || a.description}`, kind: 'agent', depth: depth + 1, parent: 'p' + p.number, agent: a, panel: p });
     }
-    if (kind === 'coord' || depth === 0) {
-      for (const child of bg.filter((c) => c.openedBy === p.number && c !== p).sort((x, y) => x.number - y.number)) {
-        add(child, depth + 1, 'p' + p.number);
-      }
+    if (kind !== 'session' || depth === 0) {
+      // A job lists all its members, in the background or not. Otherwise only background sessions are listed.
+      const children = (isJob ? panels.filter((c) => c.cwd && c.openedBy === p.number) : bg.filter((c) => c.openedBy === p.number))
+        .filter((c) => c !== p)
+        .sort((x, y) => x.number - y.number);
+      for (const child of children) add(child, depth + 1, 'p' + p.number);
     }
   };
   const openers = new Set(bg.map((p) => p.openedBy).filter((n) => n && panels.some((o) => o.number === n && o.cwd)));
+  for (const n of owners) openers.add(n);
   const roots = panels
     .filter((p) => p.cwd && (openers.has(p.number) || (p.inBackground && !openers.has(p.openedBy))))
     .sort((a, b) => a.number - b.number);
@@ -1150,6 +1167,7 @@ function treeRowContent(node) {
     parts.push(el('span', 'tree-mark working'), el('span', 'tree-title', node.agent.description), el('span', 'tree-time', `${mins}m`));
     return { parts, sig: `a|${node.agent.description}|${mins}` };
   }
+  if (node.kind === 'job') return jobRowContent(node, label);
   if (node.kind === 'coord') {
     const mark = el('span', 'tree-mark coord');
     mark.style.setProperty('--hue', harnessColour(label));
@@ -1170,8 +1188,8 @@ function drawSidebar() {
   // Show the list when the first background session appears. When the last one closes, let its row
   // move back up first, then hide the list.
   if (bg.length > backgroundCount) sidebarOpen = true;
-  clearTimeout(sidebarHideTimer);
-  if (!bg.length && backgroundCount > 0) sidebarHideTimer = setTimeout(() => toggleSidebar(false), 650);
+  if (bg.length) clearTimeout(sidebarHideTimer);
+  else if (backgroundCount > 0) sidebarHideTimer = setTimeout(() => toggleSidebar(false), 650);
   backgroundCount = bg.length;
   sideBtn.hidden = bg.length === 0;
   document.getElementById('side-count').textContent = String(bg.length);
@@ -1184,7 +1202,7 @@ function drawSidebar() {
   let y = 0;
   for (const n of nodes) {
     n.y = y;
-    y += TREE_ROW[n.kind] + TREE_GAP;
+    y += rowHeight(n) + TREE_GAP;
   }
   const byKey = new Map(nodes.map((n) => [n.key, n]));
 
@@ -1207,7 +1225,9 @@ function drawSidebar() {
     const fresh = !row || row.leaving;
     if (fresh) {
       row?.el.remove();
-      const elx = el('button', 'tree-row ' + n.kind);
+      const elx = el('div', 'tree-row ' + n.kind);
+      elx.tabIndex = 0;
+      elx.setAttribute('role', 'button');
       elx.dataset.key = n.key;
       elx.dataset.number = String(n.panel.number);
       const elbow = n.parent ? el('span', 'tree-elbow') : null;
@@ -1230,14 +1250,15 @@ function drawSidebar() {
       if (row.elbow) row.el.append(row.elbow);
       row.el.append(...parts);
     }
-    row.el.style.height = TREE_ROW[n.kind] + 'px';
+    row.el.style.height = rowHeight(n) + 'px';
+    row.el.className = 'tree-row ' + n.kind;
     row.el.style.paddingLeft = n.depth * TREE_INDENT + 8 + 'px';
     row.el.classList.toggle('selected', n.panel === peeked && n.kind === 'session');
     row.el.classList.toggle('asking', state === 'asking');
     row.el.title =
       n.kind === 'agent'
         ? `A subagent of ${n.panel.title || n.panel.name}: ${n.agent.description}`
-        : n.kind === 'coord'
+        : n.kind === 'coord' || n.kind === 'job'
           ? `Terminal ${n.panel.number}. Click to go to it.`
           : `${n.panel.title || n.panel.name}. Click to look at it.`;
     if (row.elbow) {
@@ -1258,6 +1279,189 @@ function placeRow(row) {
   row.el.style.transform = `translate(0px, ${row.y}px)`;
   row.el.style.opacity = '1';
   if (row.elbow) row.elbow.style.height = row.elbow.dataset.height + 'px';
+}
+
+// ---------- Jobs ----------
+
+const LOCK_CLOSED =
+  '<svg viewBox="0 0 12 12"><rect x="2" y="5.5" width="8" height="5.5" rx="1.2" fill="currentColor"/><path d="M4 5.5V4a2 2 0 0 1 4 0v1.5" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>';
+const LOCK_OPEN =
+  '<svg viewBox="0 0 12 12"><rect x="2" y="5.5" width="8" height="5.5" rx="1.2" fill="currentColor"/><path d="M4 5.5V4a2 2 0 0 1 3.9-.6" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>';
+
+function newJob(owner) {
+  return { title: owner.title || owner.harnessName || baseName(owner.cwd || '') || `Terminal ${owner.number}`, access: 'closed', requests: [], wrapping: false };
+}
+
+function jobMembers(owner) {
+  return panels.filter((p) => p.cwd && p.openedBy === owner);
+}
+
+function jobProgress(owner) {
+  const job = jobs.get(owner);
+  const members = jobMembers(owner);
+  const working = members.filter((p) => p.running && p.lightState === 'working' && !p.needsApproval).length;
+  const asking = members.filter((p) => p.running && p.needsApproval).length + job.requests.length;
+  const text = job.wrapping
+    ? 'Wrapping up'
+    : asking
+      ? `${asking} need${asking === 1 ? 's' : ''} you`
+      : working
+        ? `${working} working`
+        : 'All finished';
+  return { members, working, asking, text, ready: !job.wrapping && members.length > 0 && working === 0 && asking === 0 };
+}
+
+function endJob(owner) {
+  const job = jobs.get(owner);
+  if (!job) return;
+  for (const r of job.requests) r.resolve({ decision: 'deny', reason: 'The job has ended.' });
+  jobs.delete(owner);
+  saveWorkspace();
+}
+
+function jobRowContent(node, label) {
+  const owner = node.panel.number;
+  const job = jobs.get(owner);
+  const progress = jobProgress(owner);
+  const parts = [];
+  const top = el('span', 'job-top');
+  const mark = el('span', 'tree-mark coord');
+  mark.style.setProperty('--hue', harnessColour(label));
+  top.append(mark, el('span', 'tree-title strong job-title', job.title));
+  const meta = el('span', 'job-meta');
+  const access = el('span', 'job-access');
+  access.dataset.action = 'access';
+  access.dataset.owner = String(owner);
+  access.title = job.access === 'closed' ? 'Closed: other terminals need your permission to use this job. Click to open it.' : 'Open: any terminal can use this job. Click to close it.';
+  access.innerHTML = (job.access === 'closed' ? LOCK_CLOSED : LOCK_OPEN) + (job.access === 'closed' ? 'Closed' : 'Open');
+  meta.append(access, el('span', 'job-owner', `${owner <= 9 ? '⌘' + owner : owner} ${label}`), el('span', 'side-state', progress.text));
+  const actions = el('span', 'job-actions');
+  const wrap = el('span', 'btn job-btn' + (progress.ready ? ' ready' : ''), job.wrapping ? 'Wrapping up…' : 'Wrap up');
+  wrap.dataset.action = 'wrap';
+  wrap.dataset.owner = String(owner);
+  wrap.title = progress.ready
+    ? 'Every session has finished. Close them all and keep their conversations.'
+    : 'Close every session in this job. Their conversations are kept.';
+  actions.append(wrap);
+  parts.push(top, meta, actions);
+  for (const r of job.requests) {
+    const box = el('span', 'job-request');
+    box.append(el('span', 'job-request-text', `⌘${r.from.number} ${r.from.harnessName || baseName(r.from.cwd || '')} wants to ${r.tool === 'SendMessage' ? 'message' : 'read'} ${r.target.title || r.target.name}.`));
+    const buttons = el('span', 'job-request-buttons');
+    for (const [action, text] of [['allow', 'Allow once'], ['deny', 'Deny']]) {
+      const b = el('span', 'btn job-btn' + (action === 'allow' ? ' primary' : ''), text);
+      b.dataset.action = action;
+      b.dataset.owner = String(owner);
+      b.dataset.request = r.id;
+      buttons.append(b);
+    }
+    box.append(buttons);
+    parts.push(box);
+  }
+  const sig = `j|${job.title}|${job.access}|${progress.text}|${progress.ready}|${job.wrapping}|${label}|${job.requests.map((r) => r.id).join(',')}`;
+  return { parts, sig, state: job.requests.length ? 'asking' : '' };
+}
+
+function jobAction(owner, action, requestId) {
+  const job = jobs.get(owner);
+  if (!job) return;
+  if (action === 'access') {
+    job.access = job.access === 'closed' ? 'open' : 'closed';
+    saveWorkspace();
+  } else if (action === 'wrap') {
+    wrapUpJob(owner).catch((err) => showNotice('Could not wrap up the job', err.message));
+  } else if (action === 'allow' || action === 'deny') {
+    const r = job.requests.find((x) => x.id === requestId);
+    if (r) r.resolve(action === 'allow' ? { decision: 'allow' } : { decision: 'deny', reason: r.denyReason });
+  }
+  drawStatusLine();
+}
+
+// Which open panel a SendMessage target or a session argument means: "3", "3-wrap", "@3-wrap [45bf02]" or a name.
+function panelForTarget(target) {
+  const clean = String(target || '').trim().replace(/^@/, '').replace(/\s*\[[0-9a-f]+\]$/, '');
+  const m = clean.match(/^(\d+)(-|$)/);
+  if (m) return panels.find((p) => p.number === Number(m[1]) && p.cwd) || null;
+  return panels.find((p) => p.cwd && p.name === clean) || null;
+}
+
+// Before one terminal messages or reads another, the app checks whether the other is in a closed job.
+// The owner and the job's own members may always use it. Anyone else needs the user's permission,
+// which the job's card in the sidebar asks for.
+function gateRequest({ from, to, tool }) {
+  const target = panelForTarget(to);
+  const sender = panels.find((p) => p.number === Number(from));
+  const owner = target?.openedBy;
+  const job = owner && jobs.get(owner);
+  if (!target || !sender || !job || job.access === 'open') return { decision: 'allow' };
+  if (sender === target || sender.number === owner || sender.openedBy === owner) return { decision: 'allow' };
+  return new Promise((resolve) => {
+    const request = {
+      id: Math.random().toString(36).slice(2),
+      from: sender,
+      target,
+      tool,
+      denyReason:
+        `The user did not allow terminal ${sender.number} to use ${target.name}. It is part of a closed job ` +
+        `owned by terminal ${owner}. Ask terminal ${owner} instead, or ask the user.`,
+    };
+    const timer = setTimeout(() => request.resolve({ decision: 'deny', reason: 'Nobody answered the request in time.' }), 270000);
+    request.resolve = (answer) => {
+      clearTimeout(timer);
+      job.requests = job.requests.filter((r) => r !== request);
+      drawStatusLine();
+      resolve(answer);
+    };
+    job.requests.push(request);
+    toggleSidebar(true);
+    drawStatusLine();
+  });
+}
+
+function setJobFromClaude({ from, title, access }) {
+  const owner = panels.find((p) => p.number === Number(from));
+  if (!owner) throw new Error(`Terminal ${from} is not open.`);
+  if (owner.openedBy) throw new Error(`This terminal is part of terminal ${owner.openedBy}'s job, so it cannot have a job of its own.`);
+  if (!jobs.has(owner.number)) jobs.set(owner.number, newJob(owner));
+  const job = jobs.get(owner.number);
+  if (title && String(title).trim()) job.title = String(title).trim().slice(0, 80);
+  if (access === 'open' || access === 'closed') job.access = access;
+  saveWorkspace();
+  drawStatusLine();
+  return { title: job.title, access: job.access, members: jobMembers(owner.number).length };
+}
+
+// Wrapping up closes the job's sessions one at a time from the bottom of the tree upwards, so each branch
+// moves back into its parent. The owner's panel stays open. Conversations are kept, so ⌘K can resume them.
+async function wrapUpJob(owner, { byClaude = false } = {}) {
+  const job = jobs.get(owner);
+  if (!job) throw new Error('This terminal has no job to wrap up.');
+  if (job.wrapping) throw new Error('The job is already being wrapped up.');
+  const progress = jobProgress(owner);
+  if (!progress.ready) {
+    const words = `${progress.working} still working and ${progress.asking} waiting for the user`;
+    if (byClaude) throw new Error(`Not wrapped up, because the job has ${words}. Wait until they have finished.`);
+    if (!confirm(`"${job.title}" has ${words}. Wrap it up anyway? Those sessions will stop, but their conversations are kept.`)) return { title: job.title, closed: 0 };
+  }
+  job.wrapping = true;
+  toggleSidebar(true);
+  drawStatusLine();
+  const order = treeNodes()
+    .filter((n) => n.kind !== 'agent' && n.panel.openedBy === owner)
+    .map((n) => n.panel)
+    .reverse();
+  let closed = 0;
+  for (const p of order) {
+    if (!panels.includes(p)) continue;
+    closePanel(p, { confirmed: true });
+    closed++;
+    await new Promise((r) => setTimeout(r, 420));
+  }
+  job.wrapping = false;
+  endJob(owner);
+  drawStatusLine();
+  showNotice(`Wrapped up "${job.title}"`, `Closed ${closed} session${closed === 1 ? '' : 's'}. Their conversations are kept, so ⌘K can find and resume them.`);
+  return { title: job.title, closed };
 }
 
 // ---------- Stack view (⌘S) ----------
@@ -1418,6 +1622,7 @@ function currentWorkspace() {
       harnessName: p.harnessName,
       openedBy: p.openedBy || null,
       background: Boolean(p.inBackground),
+      job: jobs.has(p.number) ? { title: jobs.get(p.number).title, access: jobs.get(p.number).access } : null,
     }));
 }
 
@@ -1443,6 +1648,7 @@ async function restoreWorkspace() {
         ? focused
         : addPanel(item.number, { quiet: Boolean(item.background), inBackground: Boolean(item.background) });
     panel.openedBy = item.openedBy || null;
+    if (item.job) jobs.set(panel.number, { ...newJob(panel), ...item.job });
     // A session that never got a message has no saved file, so start a fresh one in that folder instead.
     const resumeId = item.sessionId && known.has(item.sessionId) ? item.sessionId : null;
     await launch(panel, item.cwd, { resumeId, title: item.title, harnessName: item.harnessName, name: resumeId ? item.name : null });
@@ -1585,7 +1791,7 @@ function drawStatusLine() {
   statusLine.innerHTML = '';
   if (!open.length) return;
   const count = (state) => open.filter((p) => p.running && p.lightState === state && !p.needsApproval).length;
-  const asking = open.filter((p) => p.running && p.needsApproval).length;
+  const asking = open.filter((p) => p.running && p.needsApproval).length + [...jobs.values()].reduce((n, j) => n + j.requests.length, 0);
   const item = (text, cls) => {
     const span = el('span', 'status-item' + (cls ? ' ' + cls : ''));
     if (cls) span.append(el('span', 'status-dot'));
@@ -2070,10 +2276,28 @@ document.getElementById('settings-btn').addEventListener('click', openSettings);
 layoutBtn.addEventListener('click', toggleOddLayout);
 document.getElementById('stack-btn').addEventListener('click', toggleStack);
 sideBtn.addEventListener('click', () => toggleSidebar());
+sideList.addEventListener('keydown', (e) => {
+  if ((e.key === 'Enter' || e.key === ' ') && e.target.classList.contains('tree-row')) {
+    e.preventDefault();
+    e.target.click();
+  }
+});
+api.onAppRequest(async (id, kind, payload) => {
+  try {
+    if (kind === 'gate') api.appResult(id, await gateRequest(payload));
+    else if (kind === 'job') api.appResult(id, setJobFromClaude(payload));
+    else if (kind === 'wrap-up') api.appResult(id, await wrapUpJob(Number(payload.from), { byClaude: true }));
+    else api.appResult(id, { error: 'Unknown request.' });
+  } catch (err) {
+    api.appResult(id, { error: err.message });
+  }
+});
 document.getElementById('side-close').addEventListener('click', () => toggleSidebar(false));
 document.getElementById('peek-hide').addEventListener('click', () => hidePeek());
 document.getElementById('peek-open').addEventListener('click', () => peeked && setBackground(peeked, false, { focus: true }));
 sideList.addEventListener('click', (e) => {
+  const action = e.target.closest('[data-action]');
+  if (action) return jobAction(Number(action.dataset.owner), action.dataset.action, action.dataset.request);
   const row = e.target.closest('[data-number]');
   const panel = row && panels.find((p) => p.number === Number(row.dataset.number));
   if (!panel) return;
@@ -2221,6 +2445,7 @@ api.onOpenRequest(async (id, req) => {
     if (!from) throw new Error(`Terminal ${req.from} is not open.`);
     const panel = addPanel(undefined, { quiet: true, inBackground: Boolean(req.background) });
     panel.openedBy = from.number;
+    if (!jobs.has(from.number)) jobs.set(from.number, newJob(from));
     const firstMessage =
       `Terminal ${from.number} (${from.name}) opened this terminal and asked for help with the task below. ` +
       `When you have finished, send ${from.name} a short report with SendMessage, then tell the user here what you did.\n\n` +
@@ -2238,6 +2463,21 @@ api.onOpenRequest(async (id, req) => {
     api.openResult(id, { error: err.message });
   }
 });
+
+// A short notice at the top right that goes away by itself.
+function showNotice(title, text) {
+  const box = el('div', 'opened-notice');
+  const head = el('div', 'approval-head');
+  head.append(el('span', null, title));
+  const close = el('button', 'link-btn', '×');
+  close.title = 'Dismiss';
+  close.style.marginLeft = 'auto';
+  close.addEventListener('click', () => box.remove());
+  head.append(close);
+  box.append(head, el('div', 'approval-question', text));
+  document.body.append(box);
+  setTimeout(() => box.remove(), 10000);
+}
 
 function showOpenedNotice(from, panel, task) {
   const box = el('div', 'opened-notice');

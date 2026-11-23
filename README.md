@@ -128,6 +128,17 @@ A background session is a normal Claude Code terminal that keeps running without
 - **Questions.** When a background session asks for your approval, the card appears in the panel you are using, as it does for any other terminal.
 - Background sessions are saved with your other terminals, so ⌘R brings them back in the background.
 
+## Jobs
+
+The terminals that one terminal opens make up its **job**. The job's card sits at the top of its branch in the Background list. It shows the job's name, whether it is closed or open, which terminal owns it, and how its sessions are getting on.
+
+- **Naming it.** The owner's Claude can name the job with the `set_job` tool. Until then it takes the owner's title.
+- **Closed or open.** A job is closed to begin with. In a closed job, any other terminal that tries to message one of its sessions, or read or search its conversation, has to wait for you. The job's card shows what it wants, with **Allow once** and **Deny**. The owner and the job's own sessions never need to ask. Click **Closed** or **Open** on the card to change it, or the owner's Claude can change it with `set_job`.
+- **Wrap up.** When every session in the job has finished, the **Wrap up** button turns green. Clicking it closes the job's sessions one at a time from the bottom of the tree upwards, so each branch moves back into its parent, and then the job's card goes. The owner's own panel stays open. The conversations are kept, so ⌘K can find and resume them. If some sessions are still working, the app asks you first. The owner's Claude can also wrap the job up with `wrap_up_job`, but only once every session has finished.
+- A job also ends when its owner closes or its last session closes.
+
+The check before messaging works through a Claude Code hook that the app adds when it starts each session. It only applies to sessions started by Claude Panels.
+
 There are limits so terminals cannot keep opening each other:
 
 - A terminal opened this way cannot open more terminals.

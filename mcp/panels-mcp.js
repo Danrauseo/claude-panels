@@ -125,6 +125,29 @@ const TOOLS = [
       required: ['task'],
     },
   },
+  {
+    name: 'set_job',
+    description:
+      'Name the job made up of the terminals you open, and set who else may use them. The app groups the ' +
+      'terminals you open into one job, shown in its sidebar under your terminal. A closed job (the default) ' +
+      'means another terminal must get the user\'s permission before it messages or reads one of your ' +
+      'terminals. An open job lets any terminal use them. Call it before or after open_terminal.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: 'A short name for the job, for example "Sefton pilot evaluation".' },
+        access: { type: 'string', enum: ['closed', 'open'], description: 'Who may use the terminals in the job.' },
+      },
+    },
+  },
+  {
+    name: 'wrap_up_job',
+    description:
+      'Close every terminal in your job once they have all finished and reported back to you. Their ' +
+      'conversations are kept, so the user can resume any of them later. It does nothing while a terminal ' +
+      'in the job is still working or waiting for the user. Tell the user what the job produced first.',
+    inputSchema: { type: 'object', properties: {} },
+  },
 ];
 
 const readJson = (file, fallback) => {
@@ -306,13 +329,13 @@ async function askExpert(args) {
 }
 
 // Asks the app itself to do something, through its local address.
-async function askApp(route, body) {
+async function askApp(route, body, timeoutMs = 40000) {
   if (!CONTROL || !TOKEN) throw new Error('This terminal was started before the app could open terminals. Restart it to use this.');
   const res = await fetch(CONTROL + route, {
     method: 'POST',
     headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' },
     body: JSON.stringify(body || {}),
-    signal: AbortSignal.timeout(40000),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   const data = await res.json();
   if (!res.ok || data.error) throw new Error(data.error || `The app answered with an error (${res.status}).`);
@@ -342,12 +365,25 @@ async function callTool(name, args) {
   if (name === 'list_panels') return loadPanels().map(describePanel).join('\n') || 'No terminals are open.';
   if (name === 'list_harnesses') return listHarnesses();
   if (name === 'open_terminal') return openTerminal(args);
+  if (name === 'set_job') {
+    const r = await askApp('/job', { from: SELF, title: args.title, access: args.access });
+    return `Your job is "${r.title}" and it is ${r.access}. It has ${r.members} terminal${r.members === 1 ? '' : 's'} so far.`;
+  }
+  if (name === 'wrap_up_job') {
+    const r = await askApp('/wrap-up', { from: SELF });
+    return `Wrapped up "${r.title}". Closed ${r.closed} terminal${r.closed === 1 ? '' : 's'}. Their conversations are kept.`;
+  }
   if (name === 'find_expert') return findExpert(args.task || '', Boolean(args.everywhere));
   if (name === 'ask_expert') return askExpert(args);
 
   const found = resolve(args.session);
   if (found.error) throw new Error(found.error);
   const { file, label } = found;
+  // The session may be part of another terminal's closed job. Then the app asks the user first.
+  if (found.panel && CONTROL && TOKEN) {
+    const gate = await askApp('/gate', { from: SELF, to: String(found.panel.number), tool: name }, 290000);
+    if (gate.decision === 'deny') throw new Error(gate.reason || 'Claude Panels did not allow this.');
+  }
   const messages = readTranscript(file);
 
   if (name === 'search_session') {

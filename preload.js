@@ -31,4 +31,6 @@ contextBridge.exposeInMainWorld('panelsApi', {
   onMenu: (name, fn) => ipcRenderer.on(`menu:${name}`, fn),
   onOpenRequest: (fn) => ipcRenderer.on('panels:open-request', (_e, id, req) => fn(id, req)),
   openResult: (id, result) => ipcRenderer.send('panels:open-result', id, result),
+  onAppRequest: (fn) => ipcRenderer.on('panels:app-request', (_e, id, kind, payload) => fn(id, kind, payload)),
+  appResult: (id, result) => ipcRenderer.send('panels:app-result', id, result),
 });
