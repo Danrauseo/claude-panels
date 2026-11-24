@@ -211,7 +211,7 @@ function simpleSettings() {
   };
 }
 
-// In Simple mode Claude writes for someone who does not write code.
+// With Settings > Simple > Plain-language replies, Claude writes for someone who does not write code.
 const SIMPLE_PROMPT =
   'The person using this session may not be technical, and may be new to Claude Code. Write your replies in ' +
   'plain, everyday language, in short full sentences. Avoid jargon. When you must use a technical term, say ' +
