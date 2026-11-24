@@ -2256,7 +2256,15 @@ function showPromptFor(mode) {
 
 // The choices for the model and the advisor. A harness can also use the default from Settings.
 const MODEL_CHOICES = [['fable', 'Fable'], ['opus', 'Opus'], ['sonnet', 'Sonnet'], ['haiku', 'Haiku']];
-const ADVISOR_CHOICES = [['off', 'Off'], ['opus', 'Opus'], ['fable', 'Fable']];
+const ADVISOR_CHOICES = [
+  ['off', 'Off'],
+  ['opus', 'Opus'],
+  ['fable', 'Fable'],
+  // Run by the app through its ask_advisor tool, for places without Claude Code's advisor, such as Google Vertex.
+  ['app:opus', 'Opus, run by the app'],
+  ['app:fable', 'Fable, run by the app'],
+  ['app:sonnet', 'Sonnet, run by the app'],
+];
 
 function fillSelect(select, firstLabel, choices, value) {
   select.innerHTML = '';
@@ -2333,7 +2341,21 @@ async function addHarnessFromSettings() {
   refreshPickers();
 }
 
-function openSettings() {
+// Settings is split into pages. The page you used last opens again.
+const settingsNav = document.getElementById('settings-nav');
+let settingsPage = 'models';
+function showSettingsPage(name) {
+  settingsPage = name;
+  settingsNav.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.page === name));
+  form.querySelectorAll('.settings-page').forEach((s) => (s.hidden = s.dataset.page !== name));
+}
+settingsNav.addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-page]');
+  if (b) showSettingsPage(b.dataset.page);
+});
+
+function openSettings(page) {
+  showSettingsPage(typeof page === 'string' ? page : settingsPage);
   draftPrompts = { ...settings.prompts };
   form.querySelector(`input[name="fileMode"][value="${settings.fileMode}"]`).checked = true;
   showPromptFor(settings.fileMode);

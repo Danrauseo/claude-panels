@@ -18,6 +18,8 @@ const SELF = Number(process.env.CLAUDE_PANELS_SELF) || null;
 const CONTROL = process.env.CLAUDE_PANELS_CONTROL; // the app's local address for opening terminals
 const TOKEN = process.env.CLAUDE_PANELS_TOKEN;
 const CLAUDE = (process.env.CLAUDE_PANELS_CLAUDE || 'claude').split(' ')[0];
+const ADVISOR = process.env.CLAUDE_PANELS_ADVISOR || ''; // the model for ask_advisor, when the app runs the advisor
+const OWN_SESSION = process.env.CLAUDE_PANELS_SESSION || ''; // this terminal's own Claude session id
 const INLINE_LIMIT = 30000; // longer conversations are saved to a file for Claude to read
 const CHEAP_TOKENS = 40000; // a conversation smaller than this is cheap to ask at any time
 const WARM_MINUTES = 60; // a conversation used this recently is likely still in Claude's cache
@@ -187,6 +189,27 @@ const TOOLS = [
   },
 ];
 
+// The app runs the advisor itself when Claude Code has none, for example on Google Vertex. It works like
+// Claude's advisor tool: a stronger model reads this whole conversation, with no tools, and gives advice.
+const ADVISOR_TOOL = {
+  name: 'ask_advisor',
+  description:
+    `Ask your advisor, a stronger model (${ADVISOR}), for guidance. It reads this whole conversation, including ` +
+    'your tool results, and replies with short advice on your approach, your next steps and anything you have ' +
+    'missed. It cannot use tools or see anything outside this conversation. Call it before substantive work, ' +
+    'when you are stuck or thinking of changing approach, and before you say a task is finished.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      question: {
+        type: 'string',
+        description: 'Optional. A specific question for the advisor. Without one, it reviews the work so far.',
+      },
+    },
+  },
+};
+if (ADVISOR) TOOLS.push(ADVISOR_TOOL);
+
 const readJson = (file, fallback) => {
   try {
     return JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -309,60 +332,81 @@ function findExpert(task, everywhere) {
   );
 }
 
+// The environment for a separate Claude run. It leaves out what marks this as Claude Code's own process,
+// but keeps how Claude signs in (for example Google Vertex) and Code Mode, which a copied session needs.
+const KEEP_CLAUDE_VARS = /^CLAUDE_CODE_(USE_|SKIP_|OAUTH_TOKEN$|EXPERIMENTAL_CODE_MODE$)/;
 function strippedEnv() {
   return Object.fromEntries(
-    Object.entries(process.env).filter(([k]) => k !== 'CLAUDECODE' && !k.startsWith('CLAUDE_CODE_') && k !== 'ELECTRON_RUN_AS_NODE')
+    Object.entries(process.env).filter(
+      ([k]) => k !== 'CLAUDECODE' && k !== 'ELECTRON_RUN_AS_NODE' && (!k.startsWith('CLAUDE_CODE_') || KEEP_CLAUDE_VARS.test(k))
+    )
   );
 }
 
-async function askExpert(args) {
-  const found = resolve(args.session);
-  if (found.error) throw new Error(found.error);
-  const { id, file, panel, label } = found;
-  const cost = costOf(id, file);
+// Runs the advisor, following the design of Claude's advisor tool: a separate Claude on the advisor model reads
+// this session's whole conversation so far, with no tools, and writes short advice for the session. It gets
+// its own instructions instead of Claude Code's usual ones, and nothing it writes is saved.
+const ADVISOR_CHARS = 300000; // about 75,000 tokens of conversation at most; the start and the latest part are kept
+const ADVISOR_SYSTEM =
+  'You are an advisor to another Claude session. That session is doing a task on a smaller, faster model, and ' +
+  'it has paused to ask you for guidance. You will see its conversation so far: what the user asked, what it ' +
+  'said, the tools it ran and their results. You cannot use tools, and nothing you write is shown to the user. ' +
+  'Only the session reads it. If it asked a specific question, answer that first. Then give it concise, ' +
+  'concrete guidance: whether its approach is sound, what it should do next, any mistakes or risks it has ' +
+  'missed, and what it should check before it calls the work finished. Do not do the work yourself, do not ' +
+  'write long code, and do not address the user. Keep your guidance under 200 words.';
 
-  if (panel) {
-    return (
-      `${label} is open, so message it with SendMessage instead, and its live session will answer. ${cost.note}` +
-      (cost.cheap ? '' : ' Check with the user before messaging it.')
-    );
+function advisorView(file) {
+  const messages = readTranscript(file);
+  const whole = formatTranscript(messages, 'Conversation of the session you are advising');
+  if (whole.length <= ADVISOR_CHARS) return whole;
+  // Too long: keep the first message, which usually sets the task, and as much of the latest part as fits.
+  const first = messages.slice(0, 1);
+  const tail = [];
+  let size = first.reduce((n, m) => n + m.text.length, 0) + 500;
+  for (let i = messages.length - 1; i > 0; i--) {
+    size += messages[i].text.length + 20;
+    if (size > ADVISOR_CHARS) break;
+    tail.unshift(messages[i]);
   }
-  if (!cost.cheap && !args.confirmed) {
-    return (
-      `Not asked yet. ${cost.note} Ask the user whether the answer is worth that. If they agree, call ask_expert ` +
-      'again with confirmed set to true. Searching its conversation with search_session costs almost nothing.'
-    );
-  }
+  const gap = { role: 'Note', text: `${messages.length - 1 - tail.length} earlier messages are left out here.` };
+  return formatTranscript([...first, gap, ...tail], 'Conversation of the session you are advising');
+}
 
-  const cwd = loadCVs()[id]?.cwd || process.cwd();
+async function askAdvisor(args) {
+  if (!ADVISOR) throw new Error('No advisor is set for this terminal.');
+  if (!/^[\w.[\]@-]{1,80}$/.test(ADVISOR)) throw new Error('The advisor model name is not valid.');
+  const file = OWN_SESSION && fileByIdPrefix(OWN_SESSION);
+  if (!file) throw new Error('This conversation has not been saved yet, so the advisor cannot read it. Try again after your next step.');
+  const question = String(args.question || '').trim().slice(0, 4000);
+  const input =
+    advisorView(file) +
+    '\n\n---\n\n' +
+    'The session has just called you through its ask_advisor tool. That call is the one you are answering now. ' +
+    (question ? `The session asks you: ${question}` : 'The session asks you to review its work so far and advise it on what to do next.');
+
+  // Claude runs in this terminal's folder and with the user's own settings, so it signs in the same way
+  // as the session, for example through Google Vertex.
   const shell = os.userInfo().shell || '/bin/zsh';
   const command =
-    `${CLAUDE} -p --resume "$CP_SESSION" --fork-session --no-session-persistence --tools "" ` +
-    '--append-system-prompt "$CP_SYSTEM" "$CP_QUESTION"';
-  const answer = await new Promise((done) => {
-    execFile(
+    `${CLAUDE} -p --model "$CP_MODEL" --system-prompt "$CP_SYSTEM" --tools "" --strict-mcp-config --no-session-persistence`;
+  const advice = await new Promise((done) => {
+    const child = execFile(
       shell,
       ['-l', '-i', '-c', command],
       {
-        cwd: fs.existsSync(cwd) ? cwd : os.homedir(),
+        cwd: process.cwd(),
         timeout: 300000,
         maxBuffer: 4 * 1024 * 1024,
-        env: {
-          ...strippedEnv(),
-          CP_SESSION: id,
-          CP_QUESTION: args.question,
-          CP_SYSTEM:
-            'You are being consulted as an expert by another Claude Code session, not by the user. Answer its ' +
-            'question briefly and directly from what you know in this conversation. Do not ask questions back and ' +
-            'do not offer to do anything, because nothing you say here is shown to the user or saved. Say so if ' +
-            'you are unsure or if things may have changed since.',
-        },
+        env: { ...strippedEnv(), CP_MODEL: ADVISOR, CP_SYSTEM: ADVISOR_SYSTEM },
       },
       (err, stdout, stderr) =>
-        done(stdout.trim() || `The expert did not answer. ${String(stderr || err?.message || '').slice(0, 300)}`)
+        done(stdout.trim() ? { text: stdout.trim() } : { error: String(stderr || err?.message || 'No answer.').trim().slice(0, 400) })
     );
+    child.stdin.end(input);
   });
-  return `Answer from ${label}:\n\n${answer}`;
+  if (advice.error) throw new Error(`The advisor did not answer. ${advice.error}`);
+  return `Advice from your advisor (${ADVISOR}):\n\n${advice.text}`;
 }
 
 // Asks the app itself to do something, through its local address.
@@ -433,6 +477,7 @@ async function callTool(name, args) {
   if (name === 'list_harnesses') return listHarnesses();
   if (name === 'open_terminal') return openTerminal(args);
   if (name === 'wait_for_report') return waitForReport(args);
+  if (name === 'ask_advisor') return askAdvisor(args);
   if (name === 'report_back') {
     const r = await askApp('/report', { from: SELF, report: args.report });
     return `Your report has been handed to terminal ${r.to} (${r.toName}). Now tell the user here what you did.`;

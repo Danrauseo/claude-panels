@@ -157,10 +157,25 @@ function rememberCodeMode(sessionId) {
 
 // The settings each session starts with: the hook before SendMessage, and the advisor if one is chosen.
 // 'off' turns the advisor off even if Claude Code's own settings turn it on.
+// An advisor starting with 'app:' is run by the app through the ask_advisor tool, for places where Claude
+// Code has no advisor of its own, such as Google Vertex. Claude Code's own advisor is then turned off.
 function sessionSettings(advisor) {
-  if (advisor && !/^[\w.-]{1,60}$/.test(advisor)) throw new Error('Not a valid advisor');
-  const advisorModel = advisor === 'off' ? '' : advisor || undefined;
+  if (advisor && !/^(app:)?[\w.-]{1,60}$/.test(advisor)) throw new Error('Not a valid advisor');
+  const advisorModel = advisor === 'off' || advisor?.startsWith('app:') ? '' : advisor || undefined;
   return { ...gateSettings(), ...(advisorModel !== undefined ? { advisorModel } : {}) };
+}
+
+// When to call the app's advisor, following Anthropic's guidance for its advisor tool.
+function advisorPrompt(model) {
+  return (
+    `You have an advisor: the panels ask_advisor tool. It asks a stronger model (${model}) to read this whole ` +
+    'conversation, including your tool results, and give you advice. Call it at these moments:\n' +
+    '- Before you start substantive work, once you have looked around enough to understand the task.\n' +
+    '- When you are stuck, or when you are thinking of changing your approach.\n' +
+    '- When you believe the task is done. Save your work first, then call it before you tell the user it is finished.\n' +
+    'Do not call it for small or simple tasks. Take its advice seriously, but check it against what you can see, ' +
+    'because it cannot see anything outside this conversation.'
+  );
 }
 
 function startTerminal({ cwd, cols, rows, resumeId, name, number, firstMessage, codeMode, model, advisor }) {
@@ -172,7 +187,8 @@ function startTerminal({ cwd, cols, rows, resumeId, name, number, firstMessage, 
   // The name goes in through an environment variable, so a name chosen with /rename can contain spaces.
   if (!/^[^\n\r"]{1,80}$/.test(name || '')) throw new Error('Not a valid session name');
   const filePrompt = settings.fileMode === 'off' ? '' : settings.prompts[settings.fileMode] || '';
-  const prompt = [panelsPrompt(number, name), filePrompt].filter(Boolean).join('\n\n');
+  const appAdvisor = advisor?.startsWith('app:') ? advisor.slice(4) : '';
+  const prompt = [panelsPrompt(number, name), filePrompt, appAdvisor && advisorPrompt(appAdvisor)].filter(Boolean).join('\n\n');
 
   const mcpConfig = {
     mcpServers: {
@@ -186,6 +202,8 @@ function startTerminal({ cwd, cols, rows, resumeId, name, number, firstMessage, 
           CLAUDE_PANELS_SELF: String(number),
           CLAUDE_PANELS_CVS: cvsFile(),
           CLAUDE_PANELS_CLAUDE: settings.claudeCommand || 'claude',
+          CLAUDE_PANELS_SESSION: sessionId,
+          ...(appAdvisor ? { CLAUDE_PANELS_ADVISOR: appAdvisor } : {}),
           ...(control ? { CLAUDE_PANELS_CONTROL: control.url, CLAUDE_PANELS_TOKEN: control.token } : {}),
         },
       },

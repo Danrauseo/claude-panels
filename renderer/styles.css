@@ -405,7 +405,20 @@ code { font-family: "SF Mono", Menlo, monospace; font-size: 11px; color: var(--a
 
 /* ---------- Shortcut guide in Settings ---------- */
 
-#settings-dialog { max-height: 86vh; overflow: auto; }
+#settings-dialog { width: 760px; height: min(640px, 86vh); overflow: hidden; }
+#settings-dialog[open] { display: flex; flex-direction: column; }
+#settings-form { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.settings-body { display: grid; grid-template-columns: 150px 1fr; gap: 18px; flex: 1; min-height: 0; }
+.settings-nav { display: flex; flex-direction: column; gap: 2px; border-right: 1px solid var(--border); padding-right: 12px; }
+.settings-nav button {
+  text-align: left; background: none; border: none; color: var(--muted); font: inherit;
+  padding: 6px 10px; border-radius: 6px; cursor: pointer;
+}
+.settings-nav button:hover { background: var(--hover); color: var(--text); }
+.settings-nav button.on { background: var(--select); color: var(--text); font-weight: 500; }
+.settings-pages { overflow: auto; min-height: 0; padding-right: 4px; }
+.settings-page[hidden] { display: none; }
+#settings-form .dialog-buttons { border-top: 1px solid var(--border); padding-top: 12px; margin-top: 12px; }
 .shortcut-guide {
   display: grid;
   grid-template-columns: 90px 1fr;
