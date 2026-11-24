@@ -224,6 +224,18 @@ A session that has worked on something for a while knows a lot about it. The app
 
 ⌘K shows each session's CV summary and searches the CVs, and the stack view shows a session's CV when you hover over it. Turn CVs off in Settings.
 
+## Simple mode
+
+**Settings > Display > Simple mode** makes each session easier for people who are new to Claude Code. It uses Claude Code's own settings, so it changes what Claude Code shows inside the terminal:
+
+- The tips under the spinner are turned off.
+- The spinner says "Working" instead of playful words such as "Pondering".
+- The "Cooked for 1m 2s" line after each reply is turned off.
+- A plain line at the bottom shows the folder, the model and that Esc stops Claude. It replaces any status line set in your own Claude Code settings.
+- Claude is asked to reply in plain, everyday language, to say what it is about to do and why, and to explain in plain words what each approval will do.
+
+It applies to sessions that start or resume after you save the setting.
+
 ## Colours and font
 
 The app uses the colours of claude.ai: warm dark greys, cream text and orange highlights, in the terminals and around them. To go back to the earlier blue colours, choose **Blue** under **Settings > Display > Colours**. The change applies straight away.

@@ -31,6 +31,7 @@ const DEFAULT_SETTINGS = {
   prompts: { ...DEFAULT_PROMPTS },
   claudeCommand: 'claude',
   fontSize: 13,
+  simpleMode: false, // a plainer screen and plainer replies, for people new to Claude Code
   fontFamily: 'Menlo', // the terminal font
   theme: 'claude', // the app's colours: 'claude' (the warm colours of claude.ai) or 'blue'
   oddLayout: 'bottom', // where the last panel goes when an odd number are open: 'bottom' | 'side'
@@ -96,6 +97,7 @@ function cleanEnv() {
 const registryFile = () => path.join(app.getPath('userData'), 'panels.json');
 const cvsFile = () => path.join(app.getPath('userData'), 'cvs.json');
 const mcpScript = path.join(__dirname, 'mcp', 'panels-mcp.js').replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`);
+const statusScript = path.join(__dirname, 'mcp', 'status-line.js').replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`);
 const gateScript = path.join(__dirname, 'mcp', 'gate-hook.js').replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`);
 
 // The list of open terminals that the tool server reads.
@@ -166,8 +168,27 @@ function rememberCodeMode(sessionId) {
 function sessionSettings(advisor) {
   if (advisor && !/^(app:)?[\w.-]{1,60}$/.test(advisor)) throw new Error('Not a valid advisor');
   const advisorModel = advisor === 'off' || advisor?.startsWith('app:') ? '' : advisor || undefined;
-  return { ...gateSettings(), ...(advisorModel !== undefined ? { advisorModel } : {}) };
+  return { ...gateSettings(), ...(advisorModel !== undefined ? { advisorModel } : {}), ...(settings.simpleMode ? simpleSettings() : {}) };
 }
+
+// Simple mode uses Claude Code's own display settings: no tips under the spinner, "Working" instead of
+// the playful spinner words, no "Cooked for 1m 2s" after each reply, and a plain status line.
+function simpleSettings() {
+  return {
+    spinnerTipsEnabled: false,
+    spinnerVerbs: { mode: 'replace', verbs: ['Working'] },
+    showTurnDuration: false,
+    statusLine: { type: 'command', command: `ELECTRON_RUN_AS_NODE=1 "${process.execPath}" "${statusScript}"`, padding: 0 },
+  };
+}
+
+// In Simple mode Claude writes for someone who does not write code.
+const SIMPLE_PROMPT =
+  'The person using this session may not be technical, and may be new to Claude Code. Write your replies in ' +
+  'plain, everyday language, in short full sentences. Avoid jargon. When you must use a technical term, say ' +
+  'what it means. Before you do something, say in one short sentence what you are about to do and why. When ' +
+  'you ask the person to approve something, explain in plain words what it will do. When you finish, say ' +
+  'plainly what changed and where to find it.';
 
 // When to call the app's advisor, following Anthropic's guidance for its advisor tool.
 function advisorPrompt(model) {
@@ -192,7 +213,9 @@ function startTerminal({ cwd, cols, rows, resumeId, name, number, firstMessage, 
   if (!/^[^\n\r"]{1,80}$/.test(name || '')) throw new Error('Not a valid session name');
   const filePrompt = settings.fileMode === 'off' ? '' : settings.prompts[settings.fileMode] || '';
   const appAdvisor = advisor?.startsWith('app:') ? advisor.slice(4) : '';
-  const prompt = [panelsPrompt(number, name), filePrompt, appAdvisor && advisorPrompt(appAdvisor)].filter(Boolean).join('\n\n');
+  const prompt = [panelsPrompt(number, name), filePrompt, appAdvisor && advisorPrompt(appAdvisor), settings.simpleMode && SIMPLE_PROMPT]
+    .filter(Boolean)
+    .join('\n\n');
 
   const mcpConfig = {
     mcpServers: {

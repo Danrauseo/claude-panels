@@ -2662,6 +2662,7 @@ function openSettings(page) {
   document.getElementById('auto-titles').checked = settings.autoTitles !== false;
   document.getElementById('auto-cvs').checked = settings.autoCVs !== false;
   document.getElementById('classic-display').checked = Boolean(settings.classicDisplay);
+  document.getElementById('simple-mode').checked = Boolean(settings.simpleMode);
   document.getElementById('theme').value = settings.theme === 'blue' ? 'blue' : 'claude';
   const fontMenu = document.getElementById('font-family');
   const fonts = installedFonts();
@@ -2715,6 +2716,7 @@ settingsDialog.addEventListener('close', async () => {
     autoTitles: document.getElementById('auto-titles').checked,
     autoCVs: document.getElementById('auto-cvs').checked,
     classicDisplay: document.getElementById('classic-display').checked,
+    simpleMode: document.getElementById('simple-mode').checked,
     theme: document.getElementById('theme').value,
     fontFamily: document.getElementById('font-family').value || 'Menlo',
   });
