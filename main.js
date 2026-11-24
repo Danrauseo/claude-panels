@@ -31,8 +31,22 @@ const DEFAULT_SETTINGS = {
   prompts: { ...DEFAULT_PROMPTS },
   claudeCommand: 'claude',
   fontSize: 13,
-  simpleMode: false, // a plainer screen and plainer replies, for people new to Claude Code
-  fontFamily: 'Menlo', // the terminal font
+  // Settings > Simple: each one makes Claude Code's screen plainer for people new to it.
+  simple: {
+    hideTips: false, // no tips under the spinner
+    plainSpinner: false, // "Working" instead of playful spinner words
+    hideTurnDuration: false, // no "Cooked for 1m 2s" after each reply
+    plainStatusLine: false, // a status line with the folder, the model and how to stop Claude
+    plainReplies: false, // Claude is asked to reply in plain language
+    hideThinking: false, // no thinking summaries in the conversation
+    noComparisons: false, // Claude Code does not show two answers and ask which is better
+    plainSymbols: false, // the app hides the ⎿ before tool results
+    codeModeFromHarness: false, // the Code Mode box on each harness decides, even if Claude Code's settings turn it on
+    welcome: '', // a line Claude Code shows at startup
+  },
+  fontFamily: 'JetBrains Mono', // the terminal font. JetBrains Mono, Geist Mono and IBM Plex Mono come with the app.
+  lineHeight: 1.1, // space between lines in the terminal, as a multiple of the font size
+  letterSpacing: 0, // extra space between letters in the terminal, in pixels
   theme: 'claude', // the app's colours: 'claude' (the warm colours of claude.ai) or 'blue'
   oddLayout: 'bottom', // where the last panel goes when an odd number are open: 'bottom' | 'side'
   workspace: [], // the open panels, saved so they can be restored with ⌘R
@@ -57,9 +71,10 @@ function loadSettings() {
       ...DEFAULT_SETTINGS,
       ...saved,
       prompts: { ...DEFAULT_PROMPTS, ...(saved.prompts || {}) },
+      simple: { ...DEFAULT_SETTINGS.simple, ...(saved.simple || {}) },
     };
   } catch {
-    return { ...DEFAULT_SETTINGS, prompts: { ...DEFAULT_PROMPTS } };
+    return { ...DEFAULT_SETTINGS, prompts: { ...DEFAULT_PROMPTS }, simple: { ...DEFAULT_SETTINGS.simple } };
   }
 }
 
@@ -153,11 +168,13 @@ const WAIT_LIMIT_MS = 2 * 60 * 60 * 1000;
 
 // Code Mode is switched on per harness. A session started with Code Mode can only be resumed with it,
 // so the app remembers which sessions started with it.
-function rememberCodeMode(sessionId) {
+// A positive time means the session started with Code Mode. A negative one means the app turned Code Mode
+// off for it, because the harness box was not ticked, so it must be resumed with Code Mode off too.
+function rememberCodeMode(sessionId, on = true) {
   const kept = Object.entries(settings.codeModeSessions || {})
-    .sort((a, b) => b[1] - a[1])
+    .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))
     .slice(0, 499);
-  settings.codeModeSessions = { ...Object.fromEntries(kept), [sessionId]: Date.now() };
+  settings.codeModeSessions = { ...Object.fromEntries(kept), [sessionId]: on ? Date.now() : -Date.now() };
   saveSettings();
 }
 
@@ -165,20 +182,32 @@ function rememberCodeMode(sessionId) {
 // 'off' turns the advisor off even if Claude Code's own settings turn it on.
 // An advisor starting with 'app:' is run by the app through the ask_advisor tool, for places where Claude
 // Code has no advisor of its own, such as Google Vertex. Claude Code's own advisor is then turned off.
-function sessionSettings(advisor) {
+function sessionSettings(advisor, codeModeOff) {
   if (advisor && !/^(app:)?[\w.-]{1,60}$/.test(advisor)) throw new Error('Not a valid advisor');
   const advisorModel = advisor === 'off' || advisor?.startsWith('app:') ? '' : advisor || undefined;
-  return { ...gateSettings(), ...(advisorModel !== undefined ? { advisorModel } : {}), ...(settings.simpleMode ? simpleSettings() : {}) };
+  return {
+    ...gateSettings(),
+    ...(advisorModel !== undefined ? { advisorModel } : {}),
+    ...simpleSettings(),
+    // Settings given here win over the user's own, so this turns off Code Mode their settings turn on.
+    ...(codeModeOff ? { env: { CLAUDE_CODE_EXPERIMENTAL_CODE_MODE: '0' } } : {}),
+  };
 }
 
-// Simple mode uses Claude Code's own display settings: no tips under the spinner, "Working" instead of
-// the playful spinner words, no "Cooked for 1m 2s" after each reply, and a plain status line.
+// The Simple settings use Claude Code's own display settings.
 function simpleSettings() {
+  const s = settings.simple || {};
+  const welcome = String(s.welcome || '').trim().slice(0, 200);
   return {
-    spinnerTipsEnabled: false,
-    spinnerVerbs: { mode: 'replace', verbs: ['Working'] },
-    showTurnDuration: false,
-    statusLine: { type: 'command', command: `ELECTRON_RUN_AS_NODE=1 "${process.execPath}" "${statusScript}"`, padding: 0 },
+    ...(s.hideTips ? { spinnerTipsEnabled: false } : {}),
+    ...(s.plainSpinner ? { spinnerVerbs: { mode: 'replace', verbs: ['Working'] } } : {}),
+    ...(s.hideTurnDuration ? { showTurnDuration: false } : {}),
+    ...(s.plainStatusLine
+      ? { statusLine: { type: 'command', command: `ELECTRON_RUN_AS_NODE=1 "${process.execPath}" "${statusScript}"`, padding: 0 } }
+      : {}),
+    ...(s.hideThinking ? { showThinkingSummaries: false } : {}),
+    ...(s.noComparisons ? { responseComparisonEnabled: false } : {}),
+    ...(welcome ? { companyAnnouncements: [welcome] } : {}),
   };
 }
 
@@ -207,13 +236,17 @@ function startTerminal({ cwd, cols, rows, resumeId, name, number, firstMessage, 
   // New sessions get an id chosen here, so the app knows which saved session each panel is running.
   const sessionId = resumeId || crypto.randomUUID();
   if (!fs.existsSync(cwd)) throw new Error(`Folder not found: ${cwd}`);
-  const useCodeMode = resumeId ? Boolean(settings.codeModeSessions?.[resumeId]) : Boolean(codeMode);
+  const remembered = resumeId ? settings.codeModeSessions?.[resumeId] : undefined;
+  const useCodeMode = resumeId ? remembered > 0 : Boolean(codeMode);
+  // When the harness boxes decide, a new session without Code Mode has it turned off. A resumed session
+  // keeps however it started.
+  const codeModeOff = resumeId ? remembered < 0 : !useCodeMode && Boolean(settings.simple?.codeModeFromHarness);
 
   // The name goes in through an environment variable, so a name chosen with /rename can contain spaces.
   if (!/^[^\n\r"]{1,80}$/.test(name || '')) throw new Error('Not a valid session name');
   const filePrompt = settings.fileMode === 'off' ? '' : settings.prompts[settings.fileMode] || '';
   const appAdvisor = advisor?.startsWith('app:') ? advisor.slice(4) : '';
-  const prompt = [panelsPrompt(number, name), filePrompt, appAdvisor && advisorPrompt(appAdvisor), settings.simpleMode && SIMPLE_PROMPT]
+  const prompt = [panelsPrompt(number, name), filePrompt, appAdvisor && advisorPrompt(appAdvisor), settings.simple?.plainReplies && SIMPLE_PROMPT]
     .filter(Boolean)
     .join('\n\n');
 
@@ -271,7 +304,7 @@ function startTerminal({ cwd, cols, rows, resumeId, name, number, firstMessage, 
     CLAUDE_PANELS_PROMPT: prompt,
     CLAUDE_PANELS_NAME: name,
     CLAUDE_PANELS_MCP: JSON.stringify(mcpConfig),
-    CLAUDE_PANELS_SETTINGS: JSON.stringify(sessionSettings(advisor)),
+    CLAUDE_PANELS_SETTINGS: JSON.stringify(sessionSettings(advisor, codeModeOff)),
     CLAUDE_PANELS_SELF: String(number),
     ...(control ? { CLAUDE_PANELS_CONTROL: control.url, CLAUDE_PANELS_TOKEN: control.token } : {}),
     ...(useCodeMode ? { CLAUDE_CODE_EXPERIMENTAL_CODE_MODE: '1' } : {}),
@@ -288,7 +321,7 @@ function startTerminal({ cwd, cols, rows, resumeId, name, number, firstMessage, 
     env,
   });
 
-  if (useCodeMode && !resumeId) rememberCodeMode(sessionId);
+  if (!resumeId && (useCodeMode || codeModeOff)) rememberCodeMode(sessionId, useCodeMode);
   const id = nextId++;
   terminals.set(id, proc);
   proc.onData((data) => win && !win.isDestroyed() && win.webContents.send('pty:data', id, data));

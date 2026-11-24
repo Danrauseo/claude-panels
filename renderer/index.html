@@ -117,6 +117,7 @@
           <button type="button" data-page="files">Files</button>
           <button type="button" data-page="sessions">Sessions</button>
           <button type="button" data-page="display">Display</button>
+          <button type="button" data-page="simple">Simple</button>
         </nav>
         <div class="settings-pages">
           <section class="settings-page" data-page="harnesses">
@@ -159,10 +160,6 @@
           </section>
 
           <section class="settings-page" data-page="display">
-            <label class="check" title="Turns off the tips under the spinner and the playful spinner words, adds a plain status line with the folder, the model and how to stop Claude, and asks Claude to reply in plain language.">
-              <input type="checkbox" id="simple-mode" />
-              <span>Simple mode<small>A plainer screen and plainer replies, for people new to Claude Code.</small></span>
-            </label>
             <label class="check" title="The full-screen display only keeps what is on screen. The classic display keeps the whole conversation in the terminal.">
               <input type="checkbox" id="classic-display" />
               <span>Classic display<small>Keeps the whole conversation in the terminal, so you can scroll back and copy any of it.</small></span>
@@ -180,10 +177,71 @@
               <span id="font-preview" class="font-preview">⏺ Reading 1 file… 0Oo 1lI {}</span>
             </div>
             <div class="field inline">
+              <label for="line-height">Line spacing</label>
+              <select id="line-height">
+                <option value="1">Normal</option>
+                <option value="1.1">Relaxed</option>
+                <option value="1.25">Loose</option>
+              </select>
+            </div>
+            <div class="field inline">
+              <label for="letter-spacing">Letter spacing</label>
+              <select id="letter-spacing">
+                <option value="0">Normal</option>
+                <option value="0.5">Wide</option>
+                <option value="1">Wider</option>
+              </select>
+            </div>
+            <div class="field inline">
               <label for="font-size">Text size</label>
               <input id="font-size" type="number" min="9" max="24" />
             </div>
             <p class="note">Press <kbd>⌘/</kbd> to see every keyboard shortcut.</p>
+          </section>
+
+          <section class="settings-page" data-page="simple">
+            <p class="page-intro">Make Claude Code's screen plainer for people new to it.</p>
+            <label class="check">
+              <input type="checkbox" data-simple="hideTips" />
+              <span>Hide tips<small>No tips under the spinner while Claude works.</small></span>
+            </label>
+            <label class="check">
+              <input type="checkbox" data-simple="plainSpinner" />
+              <span>Say "Working"<small>The spinner says "Working" instead of words such as "Pondering".</small></span>
+            </label>
+            <label class="check">
+              <input type="checkbox" data-simple="hideTurnDuration" />
+              <span>Hide reply times<small>No "Cooked for 1m 2s" line after each reply.</small></span>
+            </label>
+            <label class="check">
+              <input type="checkbox" data-simple="plainStatusLine" />
+              <span>Plain status line<small>A line at the bottom with the folder, the model and how to stop Claude. It replaces your own status line.</small></span>
+            </label>
+            <label class="check">
+              <input type="checkbox" data-simple="plainSymbols" />
+              <span>Hide the ⎿ symbol<small>Claude Code puts it before each tool result. The app shows a space instead.</small></span>
+            </label>
+            <label class="check">
+              <input type="checkbox" data-simple="hideThinking" />
+              <span>Hide thinking<small>Claude's thinking summaries do not show in the conversation.</small></span>
+            </label>
+            <label class="check">
+              <input type="checkbox" data-simple="noComparisons" />
+              <span>No answer comparisons<small>Claude Code does not show two answers and ask which is better.</small></span>
+            </label>
+            <label class="check">
+              <input type="checkbox" data-simple="plainReplies" />
+              <span>Plain-language replies<small>Claude is asked to write in plain, everyday language and explain each approval.</small></span>
+            </label>
+            <label class="check">
+              <input type="checkbox" data-simple="codeModeFromHarness" />
+              <span>Code Mode follows each harness<small>Turns Code Mode off unless the harness has it ticked, even if your Claude Code settings turn it on. This also removes the Code Mode notice.</small></span>
+            </label>
+            <div class="field">
+              <label for="simple-welcome">Welcome line</label>
+              <small>Shown when a session starts, under a heading with your organisation's name.</small>
+              <input id="simple-welcome" type="text" maxlength="200" placeholder="For example: Type what you need and press Return." />
+            </div>
           </section>
         </div>
       </div>

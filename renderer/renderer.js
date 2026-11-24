@@ -85,7 +85,21 @@ const TERM_THEMES = {
   },
 };
 
-// Fixed-width fonts the Font menu offers, if they are installed on this Mac.
+// Claude Code puts ⎿ before each tool result. With Settings > Simple > Hide the ⎿ symbol, the app shows a
+// space instead. Both take one cell, so nothing else on the screen moves.
+function plainOutput(data) {
+  return settings.simple?.plainSymbols ? data.replace(/\u23BF/g, ' ') : data;
+}
+
+// Fonts that come with the app, in renderer/fonts. They are free fonts under the SIL Open Font License.
+const BUNDLED_FONTS = ['JetBrains Mono', 'Geist Mono', 'IBM Plex Mono'];
+
+// Wait for the bundled fonts, so a terminal never measures its letters with a stand-in font.
+function loadBundledFonts() {
+  return Promise.all(BUNDLED_FONTS.flatMap((f) => [document.fonts.load(`13px "${f}"`), document.fonts.load(`bold 13px "${f}"`)])).catch(() => {});
+}
+
+// Fixed-width fonts the Font menu also offers, if they are installed on this Mac.
 const MONO_FONTS = [
   'SF Mono', 'Menlo', 'Monaco', 'JetBrains Mono', 'Fira Code', 'IBM Plex Mono', 'Source Code Pro', 'Cascadia Code',
   'Berkeley Mono', 'Geist Mono', 'Commit Mono', 'Iosevka', 'Hack', 'Roboto Mono', 'DM Mono', 'PT Mono',
@@ -103,15 +117,16 @@ function installedFonts() {
     return ctx.measureText(sample).width;
   };
   const bases = ['monospace', 'sans-serif', 'serif'].map((b) => [b, width(b)]);
-  installedFontList = MONO_FONTS.filter((f) => bases.some(([b, w]) => width(`"${f}", ${b}`) !== w));
-  if (!installedFontList.includes('Menlo')) installedFontList.unshift('Menlo');
+  const local = MONO_FONTS.filter((f) => !BUNDLED_FONTS.includes(f) && bases.some(([b, w]) => width(`"${f}", ${b}`) !== w));
+  if (!local.includes('Menlo')) local.unshift('Menlo');
+  installedFontList = [...BUNDLED_FONTS, ...local];
   return installedFontList;
 }
 
 // SF Mono comes inside Apple's Terminal app, so other apps such as this one can use it only once it is
 // installed in Font Book. Menlo is on every Mac.
 function termFont(name = settings?.fontFamily) {
-  return `"${name || 'Menlo'}", Menlo, monospace`;
+  return `"${name || 'JetBrains Mono'}", Menlo, monospace`;
 }
 
 function termTheme() {
@@ -797,6 +812,8 @@ async function launch(panel, dir, { resumeId = null, title = null, harnessName =
 
   const term = new Terminal({
     fontFamily: termFont(),
+    lineHeight: settings.lineHeight || 1,
+    letterSpacing: settings.letterSpacing || 0,
     fontSize: settings.fontSize,
     theme: termTheme(),
     cursorBlink: true,
@@ -878,7 +895,7 @@ async function launch(panel, dir, { resumeId = null, title = null, harnessName =
   panel.running = true;
   byPtyId.set(panel.ptyId, panel);
   if (pendingData.has(panel.ptyId)) {
-    term.write(pendingData.get(panel.ptyId));
+    term.write(plainOutput(pendingData.get(panel.ptyId)));
     pendingData.delete(panel.ptyId);
   }
 
@@ -907,7 +924,7 @@ async function launch(panel, dir, { resumeId = null, title = null, harnessName =
 
 api.onData((id, data) => {
   const panel = byPtyId.get(id);
-  if (panel) panel.term.write(data);
+  if (panel) panel.term.write(plainOutput(data));
   else pendingData.set(id, (pendingData.get(id) || '') + data);
 });
 
@@ -2662,11 +2679,14 @@ function openSettings(page) {
   document.getElementById('auto-titles').checked = settings.autoTitles !== false;
   document.getElementById('auto-cvs').checked = settings.autoCVs !== false;
   document.getElementById('classic-display').checked = Boolean(settings.classicDisplay);
-  document.getElementById('simple-mode').checked = Boolean(settings.simpleMode);
+  for (const box of document.querySelectorAll('[data-simple]')) box.checked = Boolean(settings.simple?.[box.dataset.simple]);
+  document.getElementById('simple-welcome').value = settings.simple?.welcome || '';
+  document.getElementById('line-height').value = String(settings.lineHeight ?? 1.1);
+  document.getElementById('letter-spacing').value = String(settings.letterSpacing ?? 0);
   document.getElementById('theme').value = settings.theme === 'blue' ? 'blue' : 'claude';
   const fontMenu = document.getElementById('font-family');
   const fonts = installedFonts();
-  const current = settings.fontFamily || 'Menlo';
+  const current = settings.fontFamily || 'JetBrains Mono';
   fontMenu.innerHTML = '';
   for (const f of fonts.includes(current) ? fonts : [current, ...fonts]) {
     const o = el('option', null, f);
@@ -2716,15 +2736,22 @@ settingsDialog.addEventListener('close', async () => {
     autoTitles: document.getElementById('auto-titles').checked,
     autoCVs: document.getElementById('auto-cvs').checked,
     classicDisplay: document.getElementById('classic-display').checked,
-    simpleMode: document.getElementById('simple-mode').checked,
+    simple: {
+      ...Object.fromEntries([...document.querySelectorAll('[data-simple]')].map((box) => [box.dataset.simple, box.checked])),
+      welcome: document.getElementById('simple-welcome').value.trim(),
+    },
+    lineHeight: Number(document.getElementById('line-height').value) || 1,
+    letterSpacing: Number(document.getElementById('letter-spacing').value) || 0,
     theme: document.getElementById('theme').value,
-    fontFamily: document.getElementById('font-family').value || 'Menlo',
+    fontFamily: document.getElementById('font-family').value || 'JetBrains Mono',
   });
   applyTheme();
   for (const p of panels) {
     if (p.term) {
       p.term.options.fontSize = fontSize;
       p.term.options.fontFamily = termFont();
+      p.term.options.lineHeight = settings.lineHeight || 1;
+      p.term.options.letterSpacing = settings.letterSpacing || 0;
       p.fit.fit();
     }
   }
@@ -2895,6 +2922,7 @@ function updateTitles() {
 (async () => {
   settings = await api.getSettings();
   applyTheme();
+  await loadBundledFonts();
   restorable = settings.workspace || [];
   updateRestoreHint();
   applyLayout();

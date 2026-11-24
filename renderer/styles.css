@@ -1,3 +1,13 @@
+/* Terminal fonts that come with the app. Free fonts under the SIL Open Font License; see renderer/fonts. */
+@font-face { font-family: "JetBrains Mono"; src: url("fonts/JetBrainsMono-Regular.woff2") format("woff2"); font-style: normal; font-weight: 400; }
+@font-face { font-family: "JetBrains Mono"; src: url("fonts/JetBrainsMono-Bold.woff2") format("woff2"); font-style: normal; font-weight: 700; }
+@font-face { font-family: "JetBrains Mono"; src: url("fonts/JetBrainsMono-Italic.woff2") format("woff2"); font-style: italic; font-weight: 400; }
+@font-face { font-family: "Geist Mono"; src: url("fonts/GeistMono-Regular.woff2") format("woff2"); font-style: normal; font-weight: 400; }
+@font-face { font-family: "Geist Mono"; src: url("fonts/GeistMono-Bold.woff2") format("woff2"); font-style: normal; font-weight: 700; }
+@font-face { font-family: "IBM Plex Mono"; src: url("fonts/IBMPlexMono-Regular.woff2") format("woff2"); font-style: normal; font-weight: 400; }
+@font-face { font-family: "IBM Plex Mono"; src: url("fonts/IBMPlexMono-Bold.woff2") format("woff2"); font-style: normal; font-weight: 700; }
+@font-face { font-family: "IBM Plex Mono"; src: url("fonts/IBMPlexMono-Italic.woff2") format("woff2"); font-style: italic; font-weight: 400; }
+
 :root {
   --bg: #0c0e13;
   --panel: #12151b;
@@ -329,7 +339,8 @@ legend { font-weight: 600; margin-bottom: 5px; }
 .field textarea { resize: vertical; line-height: 1.4; }
 .field input[type="number"] { width: 60px; }
 .font-preview { color: var(--muted); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.settings-page .field select { width: 120px; padding: 5px 8px; font-size: 12.5px; }
+.settings-page .field.inline > label { width: 104px; flex: none; }
+.settings-page .field select { width: 170px; padding: 5px 8px; font-size: 12.5px; }
 .field .link-btn { align-self: flex-start; font-size: 11px; }
 .field[hidden] { display: none; }
 code { font-family: "SF Mono", Menlo, monospace; font-size: 11px; color: var(--accent-text); }

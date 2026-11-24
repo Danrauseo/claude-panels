@@ -224,17 +224,22 @@ A session that has worked on something for a while knows a lot about it. The app
 
 ⌘K shows each session's CV summary and searches the CVs, and the stack view shows a session's CV when you hover over it. Turn CVs off in Settings.
 
-## Simple mode
+## Simple
 
-**Settings > Display > Simple mode** makes each session easier for people who are new to Claude Code. It uses Claude Code's own settings, so it changes what Claude Code shows inside the terminal:
+**Settings > Simple** has settings that make Claude Code's screen plainer for people who are new to it. Each one can be turned on by itself. Most use Claude Code's own settings, so they change what Claude Code shows inside the terminal.
 
-- The tips under the spinner are turned off.
-- The spinner says "Working" instead of playful words such as "Pondering".
-- The "Cooked for 1m 2s" line after each reply is turned off.
-- A plain line at the bottom shows the folder, the model and that Esc stops Claude. It replaces any status line set in your own Claude Code settings.
-- Claude is asked to reply in plain, everyday language, to say what it is about to do and why, and to explain in plain words what each approval will do.
+- **Hide tips.** No tips under the spinner while Claude works.
+- **Say "Working".** The spinner says "Working" instead of words such as "Pondering". The animation stays.
+- **Hide reply times.** No "Cooked for 1m 2s" line after each reply.
+- **Plain status line.** A line at the bottom shows the folder, the model and that Esc stops Claude. It replaces any status line in your own Claude Code settings.
+- **Hide the ⎿ symbol.** Claude Code puts ⎿ before each tool result. The app shows a space instead.
+- **Hide thinking.** Claude's thinking summaries do not show in the conversation.
+- **No answer comparisons.** Claude Code does not show two answers and ask which is better. Claude Code marks this setting as internal, so it may change.
+- **Plain-language replies.** Claude is asked to write in plain, everyday language, to say what it is about to do and why, and to explain each approval in plain words.
+- **Code Mode follows each harness.** Code Mode is turned off unless the harness has its Code Mode box ticked, even if your own Claude Code settings turn it on. This also removes the Code Mode notice at the top of each session. A session keeps the Code Mode it started with when it is resumed.
+- **Welcome line.** A line shown when a session starts. Claude Code shows it under a heading with your organisation's name.
 
-It applies to sessions that start or resume after you save the setting.
+They apply to sessions that start or resume after you save.
 
 ## Colours and font
 
@@ -242,7 +247,9 @@ The app uses the colours of claude.ai: warm dark greys, cream text and orange hi
 
 The app sets the terminal's background, its text colour and its 16 standard colours. Claude Code chooses its own layout and most of its own colours, so those look the same in either setting.
 
-**Settings > Display > Font** sets the terminal font. It lists the fixed-width fonts installed on your Mac, with a preview, and Menlo is the default. SF Mono comes inside Apple's Terminal app, so it only appears in the list once you install it in Font Book.
+**Settings > Display > Font** sets the terminal font, with a preview. Three free fonts come with the app: JetBrains Mono (the default), Geist Mono and IBM Plex Mono. The list also shows fixed-width fonts installed on your Mac. SF Mono comes inside Apple's Terminal app, so it only appears in the list once you install it in Font Book. **Line spacing** and **Letter spacing** give the text more room.
+
+The bundled fonts are under the SIL Open Font License. Their licences are in `renderer/fonts`.
 
 Claude Code draws everything inside the terminal, including how it describes each tool it uses, such as "Reading 1 file…". The app cannot change that text.
 
