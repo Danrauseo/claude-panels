@@ -41,6 +41,7 @@ let restorable = []; // panels open when the app last closed, restored with ⌘R
 let peeked = null; // the background panel shown in the peek drawer
 let sidebarOpen = false;
 let backgroundCount = 0;
+let busyCount = 0; // panels on screen that are running subagents, last time the sidebar was drawn
 // A job is the set of terminals one terminal (its owner) has opened. Its owner number maps to
 // { title, access: 'closed' | 'open', requests: [], wrapping }. The members are the open panels whose
 // openedBy is the owner. In a closed job, other terminals need the user's permission to use a member.
@@ -554,7 +555,9 @@ async function addHarnessFromPicker(panel, name) {
 async function addHarness(name, dir) {
   const old = settings.harnesses.find((h) => slug(h.name) === slug(name));
   const others = settings.harnesses.filter((h) => h !== old);
-  await saveSettings({ harnesses: [...others, { name: slug(name), path: dir, ...(old?.codeMode ? { codeMode: true } : {}) }] });
+  // Adding a harness again with the same name keeps its options and changes its folder.
+  const { name: _n, path: _p, ...options } = old || {};
+  await saveSettings({ harnesses: [...others, { ...options, name: slug(name), path: dir }] });
 }
 
 // ---------- Session search (⌘K) ----------
@@ -776,7 +779,8 @@ async function launch(panel, dir, { resumeId = null, title = null, harnessName =
     // Keep a name the user chose with /rename. Otherwise name the session after its panel.
     panel.name = name && !/^\d+-[\w-]+$/.test(name) ? name : sessionName(panel);
     // A new session uses its harness's Code Mode setting. A resumed one keeps what it started with.
-    const harness = harnessName && settings.harnesses.find((h) => slug(h.name) === slug(harnessName));
+    // The model and advisor come from the harness, or else from the defaults in Settings.
+    const harness = harnessFor(harnessName, dir);
     const started = await api.startTerminal({
       cwd: dir,
       cols: term.cols,
@@ -786,6 +790,8 @@ async function launch(panel, dir, { resumeId = null, title = null, harnessName =
       number: panel.number,
       firstMessage,
       codeMode: Boolean(harness?.codeMode),
+      model: harness?.model || settings.defaultModel || '',
+      advisor: harness?.advisor || settings.defaultAdvisor || '',
     });
     panel.ptyId = started.id;
     panel.sessionId = started.sessionId;
@@ -999,6 +1005,17 @@ function groupOf(panel) {
   return { key: panel.cwd, name: baseName(panel.cwd), path: panel.cwd };
 }
 
+// The saved harness for a session: the one it was started in, or else the one its folder is in.
+function harnessFor(harnessName, cwd) {
+  const named = harnessName && settings.harnesses.find((h) => slug(h.name) === slug(harnessName));
+  if (named || !cwd) return named || null;
+  return (
+    settings.harnesses
+      .filter((h) => cwd === h.path || cwd.startsWith(h.path + '/'))
+      .sort((a, b) => b.path.length - a.path.length)[0] || null
+  );
+}
+
 // The harness name shown for a past session: the saved harness its folder is in, or else the folder's name.
 function harnessLabelFor(cwd) {
   if (!cwd) return '';
@@ -1154,10 +1171,19 @@ function treeNodes() {
   };
   const openers = new Set(bg.map((p) => p.openedBy).filter((n) => n && panels.some((o) => o.number === n && o.cwd)));
   for (const n of owners) openers.add(n);
-  const roots = panels
-    .filter((p) => p.cwd && (openers.has(p.number) || (p.inBackground && !openers.has(p.openedBy))))
-    .sort((a, b) => a.number - b.number);
-  for (const r of roots) add(r, 0, null);
+  let roots = panels.filter((p) => p.cwd && (openers.has(p.number) || (p.inBackground && !openers.has(p.openedBy))));
+  const listed = () => {
+    nodes.length = 0;
+    roots.sort((a, b) => a.number - b.number).forEach((r) => add(r, 0, null));
+    return new Set(nodes.map((n) => n.key));
+  };
+  // A panel running subagents that is not already in a branch gets a branch of its own.
+  const keys = listed();
+  const missing = panels.filter((p) => p.cwd && (p.agents || []).length && !keys.has('p' + p.number));
+  if (missing.length) {
+    roots = [...roots, ...missing];
+    listed();
+  }
   return nodes;
 }
 
@@ -1195,12 +1221,16 @@ function drawSidebar() {
   const bg = panels.filter((p) => p.inBackground && p.cwd);
   // Show the list when the first background session appears. When the last one closes, let its row
   // move back up first, then hide the list.
-  if (bg.length > backgroundCount) sidebarOpen = true;
-  if (bg.length) clearTimeout(sidebarHideTimer);
-  else if (backgroundCount > 0) sidebarHideTimer = setTimeout(() => toggleSidebar(false), 650);
+  // Panels on screen that are running subagents are listed too, so the list also opens when one starts them.
+  const busy = panels.filter((p) => p.cwd && !p.inBackground && (p.agents || []).length);
+  const agentCount = panels.reduce((n, p) => n + (p.cwd ? (p.agents || []).length : 0), 0);
+  if (bg.length > backgroundCount || busy.length > busyCount) sidebarOpen = true;
+  if (bg.length || busy.length) clearTimeout(sidebarHideTimer);
+  else if (backgroundCount || busyCount) sidebarHideTimer = setTimeout(() => toggleSidebar(false), 650);
   backgroundCount = bg.length;
-  sideBtn.hidden = bg.length === 0;
-  document.getElementById('side-count').textContent = String(bg.length);
+  busyCount = busy.length;
+  sideBtn.hidden = bg.length + busy.length === 0;
+  document.getElementById('side-count').textContent = String(bg.length + agentCount);
   sideBtn.classList.toggle('on', sidebarOpen);
   sidebar.hidden = !sidebarOpen;
   if (sidebar.hidden) return;
@@ -2224,6 +2254,26 @@ function showPromptFor(mode) {
   promptText.value = draftPrompts[mode] || '';
 }
 
+// The choices for the model and the advisor. A harness can also use the default from Settings.
+const MODEL_CHOICES = [['fable', 'Fable'], ['opus', 'Opus'], ['sonnet', 'Sonnet'], ['haiku', 'Haiku']];
+const ADVISOR_CHOICES = [['off', 'Off'], ['opus', 'Opus'], ['fable', 'Fable']];
+
+function fillSelect(select, firstLabel, choices, value) {
+  select.innerHTML = '';
+  for (const [v, label] of [['', firstLabel], ...choices]) {
+    const option = el('option', null, label);
+    option.value = v;
+    select.append(option);
+  }
+  // Keep a value set by hand in the settings file, even if it is not one of the choices.
+  if (value && !choices.some(([v]) => v === value)) {
+    const option = el('option', null, value);
+    option.value = value;
+    select.append(option);
+  }
+  select.value = value || '';
+}
+
 function renderHarnessList() {
   harnessList.innerHTML = '';
   if (!settings.harnesses.length) harnessList.append(el('small', null, 'None yet.'));
@@ -2248,7 +2298,26 @@ function renderHarnessList() {
       "Start new sessions in this harness with Claude Code's experimental Code Mode. Sessions that are " +
       'already open, and sessions you resume, keep the setting they started with.';
     code.append(box, document.createTextNode('Code Mode'));
-    row.append(el('span', 'label', '/' + slug(h.name)), el('span', 'detail', tildePath(h.path)), code, remove);
+    // Model and advisor for this harness. Changes are saved straight away, like Code Mode.
+    const pick = (key, choices) => {
+      const label = el('label', 'harness-pick', key === 'model' ? 'Model ' : 'Advisor ');
+      const select = el('select');
+      fillSelect(select, 'Default', choices, h[key]);
+      select.addEventListener('change', async () => {
+        const changed = { ...h };
+        if (select.value) changed[key] = select.value;
+        else delete changed[key];
+        await saveSettings({ harnesses: settings.harnesses.map((x) => (x === h ? changed : x)) });
+        renderHarnessList();
+      });
+      label.append(select);
+      return label;
+    };
+    const top = el('div', 'harness-top');
+    top.append(el('span', 'label', '/' + slug(h.name)), el('span', 'detail', tildePath(h.path)), remove);
+    const opts = el('div', 'harness-opts');
+    opts.append(pick('model', MODEL_CHOICES), pick('advisor', ADVISOR_CHOICES), code);
+    row.append(top, opts);
     harnessList.append(row);
   }
 }
@@ -2273,6 +2342,8 @@ function openSettings() {
   document.getElementById('auto-titles').checked = settings.autoTitles !== false;
   document.getElementById('auto-cvs').checked = settings.autoCVs !== false;
   document.getElementById('classic-display').checked = Boolean(settings.classicDisplay);
+  fillSelect(document.getElementById('default-model'), "Claude Code's own setting", MODEL_CHOICES, settings.defaultModel);
+  fillSelect(document.getElementById('default-advisor'), "Claude Code's own setting", ADVISOR_CHOICES, settings.defaultAdvisor);
   renderHarnessList();
   settingsDialog.showModal();
 }
@@ -2308,6 +2379,8 @@ settingsDialog.addEventListener('close', async () => {
     autoTitles: document.getElementById('auto-titles').checked,
     autoCVs: document.getElementById('auto-cvs').checked,
     classicDisplay: document.getElementById('classic-display').checked,
+    defaultModel: document.getElementById('default-model').value,
+    defaultAdvisor: document.getElementById('default-advisor').value,
   });
   for (const p of panels) {
     if (p.term) {

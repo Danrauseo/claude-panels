@@ -308,7 +308,17 @@ legend { font-weight: 600; margin-bottom: 5px; }
 code { font-family: "SF Mono", Menlo, monospace; font-size: 11px; color: var(--accent-text); }
 
 .harness-list { display: flex; flex-direction: column; gap: 2px; }
-.harness-row { display: flex; gap: 10px; align-items: baseline; padding: 3px 0; }
+.harness-row { display: flex; flex-direction: column; gap: 4px; padding: 6px 0; border-bottom: 1px solid var(--border); }
+.harness-row:last-child { border-bottom: none; }
+.harness-top { display: flex; gap: 10px; align-items: baseline; min-width: 0; }
+.harness-opts { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+.field .harness-pick, .field .model-pick label { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; font-weight: 500; }
+.model-pick select { width: 170px; }
+.model-pick { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 6px; }
+.harness-pick select, .model-pick select {
+  background: var(--btn); color: var(--text); border: 1px solid var(--btn-border); border-radius: 6px;
+  font: inherit; font-size: 12px; padding: 2px 6px;
+}
 .harness-row .label { font-family: "SF Mono", Menlo, monospace; color: var(--accent-text); }
 .harness-row .detail { color: var(--muted); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .harness-code { display: flex; align-items: center; gap: 5px; color: var(--muted); font-size: 12px; white-space: nowrap; cursor: pointer; }

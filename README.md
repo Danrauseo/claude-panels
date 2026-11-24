@@ -90,6 +90,15 @@ A harness is a saved folder with a short name. Each new terminal opens with a te
 
 Claude uses the CLAUDE.md and settings it finds in the folder you start it in. You can also add and remove harnesses in Settings.
 
+### Model and advisor
+
+Settings has a default **Model** and **Advisor** for your sessions. The advisor is a stronger model that Claude can consult at key moments, the same as Claude Code's `/advisor` command. For example, you can run sessions on Sonnet or Haiku with Opus as the advisor.
+
+- Each harness in Settings has its own **Model** and **Advisor** menus. **Default** uses the choice at the top of Settings.
+- The default choices include **Claude Code's own setting**, which leaves the choice to Claude Code. The advisor can also be **Off**, which turns it off even if Claude Code's own settings turn it on.
+- A session's harness is the one it was started in, or else the saved harness its folder is in. A session in no harness uses the defaults.
+- The app applies these when it starts or resumes a session, so a resumed session uses the harness's current choice. Inside a session, `/model` and `/advisor` still change them for that session.
+
 ### Code Mode
 
 Each harness in Settings has a **Code Mode** box. When it is ticked, new sessions in that harness start with Claude Code's experimental Code Mode. In Code Mode, Claude can write a short piece of code that calls several tools and works with their results, instead of calling one tool at a time. Those terminals show **Code Mode** in their top bar.
@@ -132,7 +141,7 @@ By default the new session runs in the background, so it does not take a panel. 
 
 A background session is a normal Claude Code terminal that keeps running without a panel on screen. Sessions that Claude opens with `open_terminal` start in the background, and you can move any terminal there yourself with ⌘B or the button in its top bar.
 
-- **The Background list** on the right of the window is drawn as a tree. The panel that opened sessions is at the top of its branch, the sessions it opened hang under it, and the subagents each one is running hang under that session. Each session shows its light, its harness and what it is doing: working, waiting for you, needs your approval, or ended. New sessions and subagents grow out of the row above them, and when one finishes it moves back up into that row. The list opens when the first background session starts and closes when the last one ends. ⌘J or the **Background** button at the top shows or hides it.
+- **The Background list** on the right of the window is drawn as a tree. The panel that opened sessions is at the top of its branch, the sessions it opened hang under it, and the subagents each one is running hang under that session. Each session shows its light, its harness and what it is doing: working, waiting for you, needs your approval, or ended. New sessions and subagents grow out of the row above them, and when one finishes it moves back up into that row. A terminal on screen that is running subagents is listed too, with its subagents under it, so you can see them without moving it to the background. The list opens when the first background session starts or a terminal starts running subagents, and it closes when none are left. ⌘J or the **Background** button at the top shows or hides it.
 - **Looking at one.** Click a session in the list, or press its number, to show its terminal in a drawer over your panels. You can read it and type into it there. Click the arrow to hide the drawer again.
 - **Open as panel** in the drawer, or ⌘B, gives the session a panel of its own again.
 - **Questions.** When a background session asks for your approval, the card appears in the panel you are using, as it does for any other terminal.

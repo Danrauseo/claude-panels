@@ -34,7 +34,7 @@
     </button>
     <div class="toolbar-buttons">
       <button id="update-btn" class="btn update" hidden>Update available</button>
-      <button id="side-btn" class="side-btn" title="Show or hide the sessions running in the background (⌘J)" hidden>
+      <button id="side-btn" class="side-btn" title="Show or hide background sessions and running subagents (⌘J)" hidden>
         <svg viewBox="0 0 16 16"><circle cx="4" cy="3.5" r="1.6" fill="currentColor"/><circle cx="11" cy="8" r="1.6" fill="currentColor"/><circle cx="11" cy="12.5" r="1.6" fill="currentColor"/><path d="M4 5v5.5a2 2 0 0 0 2 2h3.4M4 6a2 2 0 0 0 2 2h3.4" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>
         Background <span id="side-count" class="side-count">0</span>
       </button>
@@ -126,6 +126,15 @@
       </div>
 
       <div class="field">
+        <label>Model and advisor</label>
+        <small>The model each session uses, and the advisor, which is a stronger model Claude can consult at key moments (the same as <code>/advisor</code>). A harness can choose its own below. These apply when the app starts or resumes a session. Inside a session, <code>/model</code> and <code>/advisor</code> still change them for that session.</small>
+        <div class="model-pick">
+          <label>Model <select id="default-model"></select></label>
+          <label>Advisor <select id="default-advisor"></select></label>
+        </div>
+      </div>
+
+      <div class="field">
         <label>Harnesses</label>
         <small>Type <code>/name</code> in a new terminal to start Claude in one of these folders. You can also add one there with <code>/add name</code>.</small>
         <div id="harness-list" class="harness-list"></div>
@@ -138,7 +147,7 @@
       <div class="field">
         <label for="claude-command">Command used to start Claude</label>
         <input id="claude-command" type="text" spellcheck="false" />
-        <small>You can add options here, for example <code>claude --model opus</code>.</small>
+        <small>You can add options here, for example <code>claude --fallback-model sonnet</code>. Choose the model and advisor above instead of adding them here.</small>
       </div>
 
       <div class="field">

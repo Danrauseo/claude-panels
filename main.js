@@ -39,6 +39,8 @@ const DEFAULT_SETTINGS = {
   autoCVs: true, // keep a short CV for each session, so sessions can find experts for a task
   classicDisplay: false, // start Claude with its classic display, which keeps the whole conversation in the terminal
   titles: {}, // sessionId -> { title, basedOn, at }
+  defaultModel: '', // '' leaves it to Claude Code, otherwise a model such as 'sonnet'
+  defaultAdvisor: '', // '' leaves it to Claude Code, 'off', or a model such as 'opus'
   codeModeSessions: {}, // sessionId -> when it started, for sessions started with Code Mode, which must resume with it
 };
 
@@ -153,7 +155,15 @@ function rememberCodeMode(sessionId) {
   saveSettings();
 }
 
-function startTerminal({ cwd, cols, rows, resumeId, name, number, firstMessage, codeMode }) {
+// The settings each session starts with: the hook before SendMessage, and the advisor if one is chosen.
+// 'off' turns the advisor off even if Claude Code's own settings turn it on.
+function sessionSettings(advisor) {
+  if (advisor && !/^[\w.-]{1,60}$/.test(advisor)) throw new Error('Not a valid advisor');
+  const advisorModel = advisor === 'off' ? '' : advisor || undefined;
+  return { ...gateSettings(), ...(advisorModel !== undefined ? { advisorModel } : {}) };
+}
+
+function startTerminal({ cwd, cols, rows, resumeId, name, number, firstMessage, codeMode, model, advisor }) {
   // New sessions get an id chosen here, so the app knows which saved session each panel is running.
   const sessionId = resumeId || crypto.randomUUID();
   if (!fs.existsSync(cwd)) throw new Error(`Folder not found: ${cwd}`);
@@ -189,6 +199,10 @@ function startTerminal({ cwd, cols, rows, resumeId, name, number, firstMessage, 
   claudeLine += ' --append-system-prompt "$CLAUDE_PANELS_PROMPT"';
   // Before Claude messages another session, a hook asks the app whether that session is in a closed job.
   claudeLine += ' --settings "$CLAUDE_PANELS_SETTINGS"';
+  if (model) {
+    if (!/^[\w.[\]-]{1,60}$/.test(model)) throw new Error('Not a valid model name');
+    claudeLine += ` --model ${model}`;
+  }
   if (resumeId) {
     if (!/^[\w-]+$/.test(resumeId)) throw new Error('Not a valid session id');
     claudeLine += ` --resume ${resumeId}`;
@@ -212,7 +226,7 @@ function startTerminal({ cwd, cols, rows, resumeId, name, number, firstMessage, 
     CLAUDE_PANELS_PROMPT: prompt,
     CLAUDE_PANELS_NAME: name,
     CLAUDE_PANELS_MCP: JSON.stringify(mcpConfig),
-    CLAUDE_PANELS_SETTINGS: JSON.stringify(gateSettings()),
+    CLAUDE_PANELS_SETTINGS: JSON.stringify(sessionSettings(advisor)),
     CLAUDE_PANELS_SELF: String(number),
     ...(control ? { CLAUDE_PANELS_CONTROL: control.url, CLAUDE_PANELS_TOKEN: control.token } : {}),
     ...(useCodeMode ? { CLAUDE_CODE_EXPERIMENTAL_CODE_MODE: '1' } : {}),
