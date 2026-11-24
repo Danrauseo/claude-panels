@@ -92,14 +92,14 @@ Claude uses the CLAUDE.md and settings it finds in the folder you start it in. Y
 
 ### Model and advisor
 
-Settings is split into pages: Models, Harnesses, Files, Sessions and Display. The Models page has a default **Model** and **Advisor** for your sessions. The advisor is a stronger model that Claude can consult at key moments, the same as Claude Code's `/advisor` command. For example, you can run sessions on Sonnet or Haiku with Opus as the advisor.
+Settings is split into pages: Harnesses, Files, Sessions and Display. The Harnesses page is a table. Its first row, **Default**, sets the model and advisor for your sessions, and each harness has a row below it. The advisor is a stronger model that Claude can consult at key moments, the same as Claude Code's `/advisor` command. For example, you can run sessions on Sonnet or Haiku with Opus as the advisor.
 
-- Each harness in Settings has its own **Model** and **Advisor** menus. **Default** uses the choice at the top of Settings.
-- The default choices include **Claude Code's own setting**, which leaves the choice to Claude Code. The advisor can also be **Off**, which turns it off even if Claude Code's own settings turn it on.
+- Each harness row has its own **Model** and **Advisor** menus and a **Code Mode** box. **Default** in a menu uses the choice in the Default row. Changes on this page are saved straight away.
+- In the Default row, **Claude Code's** leaves the choice to Claude Code. The advisor can also be **Off**, which turns it off even if Claude Code's own settings turn it on.
 - A session's harness is the one it was started in, or else the saved harness its folder is in. A session in no harness uses the defaults.
 - The app applies these when it starts or resumes a session, so a resumed session uses the harness's current choice. Inside a session, `/model` and `/advisor` still change them for that session.
 
-**An advisor run by the app.** Claude Code has no advisor in some places, for example on Google Vertex. For those, choose an advisor that is *run by the app*, such as **Opus, run by the app**. It works like Anthropic's advisor tool:
+**An advisor run by the app.** Claude Code has no advisor in some places, for example on Google Vertex. For those, choose an advisor that is *run by the app*, listed under **Run by the app, for Vertex**, such as **Opus (app)**. It works like Anthropic's advisor tool:
 
 - Claude gets an `ask_advisor` tool, and its instructions say when to use it: before substantive work, when it is stuck or thinking of changing approach, and before it says a task is finished.
 - When Claude calls it, the app starts a separate Claude on the advisor model. That Claude reads the session's whole conversation so far, including the tools it ran and their results, and writes back short advice. It has no tools, nothing it writes is shown to you, and it is not saved.
@@ -109,7 +109,7 @@ Settings is split into pages: Models, Harnesses, Files, Sessions and Display. Th
 
 ### Code Mode
 
-Each harness on the Harnesses page of Settings has a **Code Mode** box. When it is ticked, new sessions in that harness start with Claude Code's experimental Code Mode. In Code Mode, Claude can write a short piece of code that calls several tools and works with their results, instead of calling one tool at a time. Those terminals show **Code Mode** in their top bar.
+Each harness row on the Harnesses page of Settings has a **Code Mode** box. When it is ticked, new sessions in that harness start with Claude Code's experimental Code Mode. In Code Mode, Claude can write a short piece of code that calls several tools and works with their results, instead of calling one tool at a time. Those terminals show **Code Mode** in their top bar.
 
 - A session that started with Code Mode can only be resumed with Code Mode. The app remembers which sessions started with it, so ⌘R, ⌘K and the stack view resume each session the way it started, even if you change the box later.
 - Changing the box does not change sessions that are already open.

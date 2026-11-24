@@ -292,7 +292,7 @@ legend { font-weight: 600; margin-bottom: 5px; }
 .field.inline { flex-direction: row; align-items: center; gap: 10px; }
 .field label { font-weight: 600; }
 .field small, .note { color: var(--muted); }
-.field input, .field textarea {
+.field input, .field textarea, .harness-add input {
   font: inherit;
   color: var(--text);
   background: var(--bg);
@@ -300,7 +300,7 @@ legend { font-weight: 600; margin-bottom: 5px; }
   border-radius: 7px;
   padding: 6px 9px;
 }
-.field input:focus, .field textarea:focus { outline: none; border-color: var(--focus); }
+.field input:focus, .field textarea:focus, .harness-add input:focus { outline: none; border-color: var(--focus); }
 .field textarea { resize: vertical; line-height: 1.4; }
 .field input[type="number"] { width: 60px; }
 .field .link-btn { align-self: flex-start; font-size: 11px; }
@@ -308,23 +308,31 @@ legend { font-weight: 600; margin-bottom: 5px; }
 code { font-family: "SF Mono", Menlo, monospace; font-size: 11px; color: var(--accent-text); }
 
 .harness-list { display: flex; flex-direction: column; gap: 2px; }
-.harness-row { display: flex; flex-direction: column; gap: 4px; padding: 6px 0; border-bottom: 1px solid var(--border); }
-.harness-row:last-child { border-bottom: none; }
-.harness-top { display: flex; gap: 10px; align-items: baseline; min-width: 0; }
-.harness-opts { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
-.field .harness-pick, .field .model-pick label { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; font-weight: 500; }
-.model-pick select { width: 170px; }
-.model-pick { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 6px; }
-.harness-pick select, .model-pick select {
-  background: var(--btn); color: var(--text); border: 1px solid var(--btn-border); border-radius: 6px;
-  font: inherit; font-size: 12px; padding: 2px 6px;
+.harness-table { display: flex; flex-direction: column; margin-bottom: 12px; }
+.harness-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) 120px 150px 76px 22px; gap: 10px; align-items: center;
+  padding: 8px 2px; border-bottom: 1px solid var(--border);
 }
-.harness-row .label { font-family: "SF Mono", Menlo, monospace; color: var(--accent-text); }
-.harness-row .detail { color: var(--muted); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.harness-code { display: flex; align-items: center; gap: 5px; color: var(--muted); font-size: 12px; white-space: nowrap; cursor: pointer; }
-.harness-code input { margin: 0; }
+.harness-row.head { padding-top: 0; font-size: 11px; color: var(--faint); text-transform: uppercase; letter-spacing: 0.04em; }
+.harness-row.default .label { color: var(--text); font-family: inherit; font-weight: 600; }
+.harness-name { display: flex; flex-direction: column; min-width: 0; }
+.harness-name .label { font-family: "SF Mono", Menlo, monospace; color: var(--accent-text); }
+.harness-name .detail { color: var(--muted); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.harness-row select {
+  width: 100%; background: var(--btn); color: var(--text); border: 1px solid var(--btn-border); border-radius: 6px;
+  font: inherit; font-size: 12px; padding: 3px 6px;
+}
+.harness-code { display: flex; justify-content: center; }
+.icon-x { background: none; border: none; color: var(--faint); font-size: 16px; line-height: 1; cursor: pointer; padding: 2px; border-radius: 4px; }
+.icon-x:hover { color: var(--text); background: var(--hover); }
+.page-intro { margin: 0 0 10px; color: var(--muted); }
+.check { display: flex; gap: 9px; align-items: flex-start; padding: 6px 0; margin-bottom: 6px; cursor: pointer; }
+.check input { margin-top: 3px; }
+.check span { display: flex; flex-direction: column; font-weight: 500; }
+.check small { font-weight: 400; color: var(--muted); }
+.dialog-hint { margin-right: auto; color: var(--faint); font-size: 11.5px; align-self: center; }
 .harness-add { display: flex; gap: 6px; align-items: center; }
-.harness-add input { width: 140px; }
+.harness-add input { width: 180px; }
 
 .dialog-buttons { display: flex; justify-content: flex-end; gap: 6px; margin-top: 6px; }
 

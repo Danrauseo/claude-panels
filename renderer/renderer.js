@@ -2254,78 +2254,103 @@ function showPromptFor(mode) {
   promptText.value = draftPrompts[mode] || '';
 }
 
-// The choices for the model and the advisor. A harness can also use the default from Settings.
+// The choices for the model and the advisor. The advisors "run by the app" use the app's ask_advisor tool,
+// for places where Claude Code has no advisor of its own, such as Google Vertex.
 const MODEL_CHOICES = [['fable', 'Fable'], ['opus', 'Opus'], ['sonnet', 'Sonnet'], ['haiku', 'Haiku']];
 const ADVISOR_CHOICES = [
   ['off', 'Off'],
   ['opus', 'Opus'],
   ['fable', 'Fable'],
-  // Run by the app through its ask_advisor tool, for places without Claude Code's advisor, such as Google Vertex.
-  ['app:opus', 'Opus, run by the app'],
-  ['app:fable', 'Fable, run by the app'],
-  ['app:sonnet', 'Sonnet, run by the app'],
+  { group: 'Run by the app, for Vertex', items: [['app:opus', 'Opus (app)'], ['app:fable', 'Fable (app)'], ['app:sonnet', 'Sonnet (app)']] },
 ];
 
 function fillSelect(select, firstLabel, choices, value) {
   select.innerHTML = '';
-  for (const [v, label] of [['', firstLabel], ...choices]) {
-    const option = el('option', null, label);
-    option.value = v;
-    select.append(option);
+  const option = (v, label) => {
+    const o = el('option', null, label);
+    o.value = v;
+    return o;
+  };
+  select.append(option('', firstLabel));
+  const known = [];
+  for (const c of choices) {
+    if (Array.isArray(c)) {
+      select.append(option(...c));
+      known.push(c[0]);
+    } else {
+      const group = document.createElement('optgroup');
+      group.label = c.group;
+      c.items.forEach((i) => group.append(option(...i)));
+      known.push(...c.items.map((i) => i[0]));
+      select.append(group);
+    }
   }
   // Keep a value set by hand in the settings file, even if it is not one of the choices.
-  if (value && !choices.some(([v]) => v === value)) {
-    const option = el('option', null, value);
-    option.value = value;
-    select.append(option);
-  }
+  if (value && !known.includes(value)) select.append(option(value, value));
   select.value = value || '';
 }
 
+// The harness table: a Default row, then one row per harness. Every change is saved straight away.
 function renderHarnessList() {
   harnessList.innerHTML = '';
-  if (!settings.harnesses.length) harnessList.append(el('small', null, 'None yet.'));
+  const head = el('div', 'harness-row head');
+  for (const t of ['Harness', 'Model', 'Advisor', 'Code Mode', '']) head.append(el('span', null, t));
+  harnessList.append(head);
+
+  const select = (firstLabel, choices, value, save) => {
+    const s = el('select');
+    fillSelect(s, firstLabel, choices, value);
+    s.addEventListener('change', () => save(s.value));
+    return s;
+  };
+  const saveHarness = async (h, changes) => {
+    const changed = { ...h, ...changes };
+    for (const k of Object.keys(changes)) if (!changes[k]) delete changed[k];
+    await saveSettings({ harnesses: settings.harnesses.map((x) => (x === h ? changed : x)) });
+    renderHarnessList();
+  };
+
+  // The Default row is used by harnesses set to Default and by folders that are not a harness.
+  const def = el('div', 'harness-row default');
+  const defName = el('span', 'harness-name');
+  defName.append(el('span', 'label', 'Default'), el('span', 'detail', 'All other sessions'));
+  defName.title = 'Used by sessions outside a harness, and by any harness setting left on Default';
+  def.append(
+    defName,
+    select("Claude Code's", MODEL_CHOICES, settings.defaultModel, (v) => saveSettings({ defaultModel: v })),
+    select("Claude Code's", ADVISOR_CHOICES, settings.defaultAdvisor, (v) => saveSettings({ defaultAdvisor: v })),
+    el('span'),
+    el('span')
+  );
+  harnessList.append(def);
+
   for (const h of settings.harnesses) {
     const row = el('div', 'harness-row');
-    const remove = el('button', 'link-btn', 'Remove');
+    const name = el('span', 'harness-name');
+    name.append(el('span', 'label', '/' + slug(h.name)), el('span', 'detail', tildePath(h.path)));
+    name.title = h.path;
+    const box = el('input');
+    box.type = 'checkbox';
+    box.checked = Boolean(h.codeMode);
+    box.title = "Start new sessions here in Claude Code's experimental Code Mode";
+    box.addEventListener('change', () => saveHarness(h, { codeMode: box.checked }));
+    const code = el('span', 'harness-code');
+    code.append(box);
+    const remove = el('button', 'icon-x', '×');
     remove.type = 'button';
+    remove.title = `Remove /${slug(h.name)}`;
     remove.addEventListener('click', async () => {
       await saveSettings({ harnesses: settings.harnesses.filter((x) => x !== h) });
       renderHarnessList();
       refreshPickers();
     });
-    const code = el('label', 'harness-code');
-    const box = el('input');
-    box.type = 'checkbox';
-    box.checked = Boolean(h.codeMode);
-    box.addEventListener('change', async () => {
-      await saveSettings({ harnesses: settings.harnesses.map((x) => (x === h ? { ...x, codeMode: box.checked } : x)) });
-      renderHarnessList();
-    });
-    code.title =
-      "Start new sessions in this harness with Claude Code's experimental Code Mode. Sessions that are " +
-      'already open, and sessions you resume, keep the setting they started with.';
-    code.append(box, document.createTextNode('Code Mode'));
-    // Model and advisor for this harness. Changes are saved straight away, like Code Mode.
-    const pick = (key, choices) => {
-      const label = el('label', 'harness-pick', key === 'model' ? 'Model ' : 'Advisor ');
-      const select = el('select');
-      fillSelect(select, 'Default', choices, h[key]);
-      select.addEventListener('change', async () => {
-        const changed = { ...h };
-        if (select.value) changed[key] = select.value;
-        else delete changed[key];
-        await saveSettings({ harnesses: settings.harnesses.map((x) => (x === h ? changed : x)) });
-        renderHarnessList();
-      });
-      label.append(select);
-      return label;
-    };
-    const top = el('div', 'harness-top');
-    top.append(el('span', 'label', '/' + slug(h.name)), el('span', 'detail', tildePath(h.path)), remove);
-    const opts = el('div', 'harness-opts');
-    opts.append(pick('model', MODEL_CHOICES), pick('advisor', ADVISOR_CHOICES), code);
-    row.append(top, opts);
+    row.append(
+      name,
+      select('Default', MODEL_CHOICES, h.model, (v) => saveHarness(h, { model: v })),
+      select('Default', ADVISOR_CHOICES, h.advisor, (v) => saveHarness(h, { advisor: v })),
+      code,
+      remove
+    );
     harnessList.append(row);
   }
 }
@@ -2343,7 +2368,7 @@ async function addHarnessFromSettings() {
 
 // Settings is split into pages. The page you used last opens again.
 const settingsNav = document.getElementById('settings-nav');
-let settingsPage = 'models';
+let settingsPage = 'harnesses';
 function showSettingsPage(name) {
   settingsPage = name;
   settingsNav.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.page === name));
@@ -2364,8 +2389,6 @@ function openSettings(page) {
   document.getElementById('auto-titles').checked = settings.autoTitles !== false;
   document.getElementById('auto-cvs').checked = settings.autoCVs !== false;
   document.getElementById('classic-display').checked = Boolean(settings.classicDisplay);
-  fillSelect(document.getElementById('default-model'), "Claude Code's own setting", MODEL_CHOICES, settings.defaultModel);
-  fillSelect(document.getElementById('default-advisor'), "Claude Code's own setting", ADVISOR_CHOICES, settings.defaultAdvisor);
   renderHarnessList();
   settingsDialog.showModal();
 }
@@ -2401,8 +2424,6 @@ settingsDialog.addEventListener('close', async () => {
     autoTitles: document.getElementById('auto-titles').checked,
     autoCVs: document.getElementById('auto-cvs').checked,
     classicDisplay: document.getElementById('classic-display').checked,
-    defaultModel: document.getElementById('default-model').value,
-    defaultAdvisor: document.getElementById('default-advisor').value,
   });
   for (const p of panels) {
     if (p.term) {

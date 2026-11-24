@@ -113,88 +113,66 @@
       <h2>Settings</h2>
       <div class="settings-body">
         <nav class="settings-nav" id="settings-nav">
-          <button type="button" data-page="models">Models</button>
           <button type="button" data-page="harnesses">Harnesses</button>
           <button type="button" data-page="files">Files</button>
           <button type="button" data-page="sessions">Sessions</button>
           <button type="button" data-page="display">Display</button>
         </nav>
         <div class="settings-pages">
-        <section class="settings-page" data-page="models">
-          <div class="field">
-            <label>Model and advisor</label>
-            <small>The model each session uses, and the advisor, which is a stronger model Claude can consult at key moments (the same as <code>/advisor</code>). A harness can choose its own on the Harnesses page. These apply when the app starts or resumes a session. Inside a session, <code>/model</code> and <code>/advisor</code> still change them for that session.</small>
-            <small>If Claude Code has no advisor where you run it, for example on Google Vertex, choose an advisor that is <em>run by the app</em>. The app then gives Claude an <code>ask_advisor</code> tool and tells it when to use it. When Claude calls it, a separate Claude on the advisor model reads the conversation so far and sends back short advice. A call usually takes under a minute, and it is billed like any other use of that model.</small>
-            <div class="model-pick">
-              <label>Model <select id="default-model"></select></label>
-              <label>Advisor <select id="default-advisor"></select></label>
-            </div>
-          </div>
-        </section>
-
-        <section class="settings-page" data-page="harnesses">
-          <div class="field">
-            <label>Harnesses</label>
-            <small>Type <code>/name</code> in a new terminal to start Claude in one of these folders. You can also add one there with <code>/add name</code>.</small>
-            <div id="harness-list" class="harness-list"></div>
+          <section class="settings-page" data-page="harnesses">
+            <p class="page-intro">Start one with <code>/name</code> in a new terminal. Changes are saved straight away.</p>
+            <div class="harness-table" id="harness-list"></div>
             <div class="harness-add">
-              <input id="harness-name" type="text" placeholder="name" spellcheck="false" />
+              <input id="harness-name" type="text" placeholder="New harness name" spellcheck="false" />
               <button type="button" id="harness-add-btn" class="btn">Choose folder and add</button>
             </div>
-          </div>
-        </section>
+          </section>
 
-        <section class="settings-page" data-page="files">
-          <fieldset>
-            <legend>When Claude creates a file</legend>
-            <label class="radio"><input type="radio" name="fileMode" value="open" /> Open it straight away</label>
-            <label class="radio"><input type="radio" name="fileMode" value="link" /> Give me a link so I can open it when it suits me</label>
-            <label class="radio"><input type="radio" name="fileMode" value="off" /> Do nothing extra</label>
-          </fieldset>
+          <section class="settings-page" data-page="files">
+            <fieldset>
+              <legend>When Claude creates a file</legend>
+              <label class="radio"><input type="radio" name="fileMode" value="open" /> Open it straight away</label>
+              <label class="radio"><input type="radio" name="fileMode" value="link" /> Give me a link</label>
+              <label class="radio"><input type="radio" name="fileMode" value="off" /> Do nothing extra</label>
+            </fieldset>
+            <div class="field" id="prompt-field">
+              <label for="prompt-text">Instruction added to Claude</label>
+              <textarea id="prompt-text" rows="5"></textarea>
+              <button type="button" id="prompt-reset" class="link-btn">Reset to the default wording</button>
+            </div>
+          </section>
 
-          <div class="field" id="prompt-field">
-            <label for="prompt-text">Instruction added to Claude for this choice</label>
-            <textarea id="prompt-text" rows="5"></textarea>
-            <button type="button" id="prompt-reset" class="link-btn">Reset to the default wording</button>
-          </div>
-          <p class="note">A new instruction applies to terminals you open after saving.</p>
-        </section>
+          <section class="settings-page" data-page="sessions">
+            <div class="field">
+              <label for="claude-command">Command used to start Claude</label>
+              <input id="claude-command" type="text" spellcheck="false" />
+            </div>
+            <label class="check" title="The app asks Haiku for a short title for each session. A name you set with /rename is used instead.">
+              <input type="checkbox" id="auto-titles" />
+              <span>Name terminals automatically<small>Uses Haiku, which costs very little.</small></span>
+            </label>
+            <label class="check" title="After 5 of your messages, the app asks Haiku for a short CV of what the session has worked on. New sessions use the CVs to find an expert session for a task.">
+              <input type="checkbox" id="auto-cvs" />
+              <span>Keep a CV for each session<small>Lets new sessions find an expert session.</small></span>
+            </label>
+          </section>
 
-        <section class="settings-page" data-page="sessions">
-          <div class="field">
-            <label for="claude-command">Command used to start Claude</label>
-            <input id="claude-command" type="text" spellcheck="false" />
-            <small>You can add options here, for example <code>claude --fallback-model sonnet</code>. Choose the model and advisor above instead of adding them here.</small>
-          </div>
-
-          <div class="field">
-            <label class="radio"><input type="checkbox" id="auto-titles" /> Name terminals automatically</label>
-            <small>Shows what each terminal is about in its top bar. The app asks Claude's smallest model, Haiku, for a short title, which costs a tiny amount per session. A name you set with <code>/rename</code> is always used instead.</small>
-          </div>
-
-          <div class="field">
-            <label class="radio"><input type="checkbox" id="auto-cvs" /> Keep a CV for each session, so sessions can find experts</label>
-            <small>Once a session has had 5 of your messages, the app asks Haiku for a short CV of what it has worked on, and refreshes it as the session grows. A new session can then find the right expert session for a task, read its CV, search its conversation, and only ask it directly when needed. It checks with you before asking a large session that has not been used recently, because that costs more. Writing each CV costs a tiny amount.</small>
-          </div>
-          <p class="note">A new command applies to terminals you open after saving.</p>
-        </section>
-
-        <section class="settings-page" data-page="display">
-          <div class="field">
-            <label class="radio"><input type="checkbox" id="classic-display" /> Use Claude Code's classic display</label>
-            <small>Claude Code's full-screen display only keeps what is on screen in the terminal, so you can't select text that has scrolled out of a panel. The classic display keeps the whole conversation in the terminal, so you can scroll and drag to copy anything. In either display, <kbd>⌘⇧C</kbd> copies Claude's whole last reply, and holding Option while dragging selects text for <kbd>⌘C</kbd>. Applies to terminals you open after saving.</small>
-          </div>
-
-          <div class="field inline">
-            <label for="font-size">Text size</label>
-            <input id="font-size" type="number" min="9" max="24" />
-          </div>
-          <p class="note">Press <kbd>⌘/</kbd> to see every keyboard shortcut.</p>
-        </section>
+          <section class="settings-page" data-page="display">
+            <label class="check" title="The full-screen display only keeps what is on screen. The classic display keeps the whole conversation in the terminal.">
+              <input type="checkbox" id="classic-display" />
+              <span>Classic display<small>Keeps the whole conversation in the terminal, so you can scroll back and copy any of it.</small></span>
+            </label>
+            <div class="field inline">
+              <label for="font-size">Text size</label>
+              <input id="font-size" type="number" min="9" max="24" />
+            </div>
+            <p class="note">Press <kbd>⌘/</kbd> to see every keyboard shortcut.</p>
+          </section>
         </div>
       </div>
 
       <div class="dialog-buttons">
+        <span class="dialog-hint">Other changes apply to terminals you open after saving.</span>
         <button value="cancel" class="btn">Cancel</button>
         <button value="save" id="settings-save" class="btn primary">Save</button>
       </div>
