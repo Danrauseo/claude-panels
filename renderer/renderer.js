@@ -2358,6 +2358,44 @@ function renderHarnessList() {
     );
     harnessList.append(row);
   }
+  renderHarnessSuggestions();
+}
+
+// Recent folders that are not harnesses yet, each with a button that saves it as one.
+async function renderHarnessSuggestions() {
+  const box = document.getElementById('harness-suggest');
+  const saved = new Set(settings.harnesses.map((h) => h.path));
+  const candidates = settings.recentLocations.filter((d) => !saved.has(d) && d !== settings.home).slice(0, 6);
+  const exists = await Promise.all(candidates.map((d) => api.folderExists(d)));
+  const folders = candidates.filter((_, i) => exists[i]);
+  box.innerHTML = '';
+  box.hidden = folders.length === 0;
+  if (!folders.length) return;
+  box.append(el('div', 'suggest-head', 'Recent folders'));
+  for (const dir of folders) {
+    const row = el('div', 'suggest-row');
+    const name = el('span', 'harness-name');
+    name.append(el('span', 'label', '/' + harnessNameFor(dir)), el('span', 'detail', tildePath(dir)));
+    name.title = dir;
+    const add = el('button', 'btn small', 'Add');
+    add.type = 'button';
+    add.addEventListener('click', async () => {
+      await addHarness(harnessNameFor(dir), dir);
+      renderHarnessList();
+      refreshPickers();
+    });
+    row.append(name, add);
+    box.append(row);
+  }
+}
+
+// A harness name for a folder: the folder's name, with a number added if that name is taken.
+function harnessNameFor(dir) {
+  const base = slug(baseName(dir)) || 'folder';
+  const taken = new Set(settings.harnesses.map((h) => slug(h.name)));
+  let name = base;
+  for (let n = 2; taken.has(name); n++) name = `${base}-${n}`;
+  return name;
 }
 
 async function addHarnessFromSettings() {

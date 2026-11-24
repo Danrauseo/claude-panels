@@ -88,7 +88,7 @@ A harness is a saved folder with a short name. Each new terminal opens with a te
 - `/browse` opens a folder chooser and `/home` starts in your home folder.
 - You can also paste a folder path, or pick a recent folder.
 
-Claude uses the CLAUDE.md and settings it finds in the folder you start it in. You can also add and remove harnesses in Settings.
+Claude uses the CLAUDE.md and settings it finds in the folder you start it in. You can also add and remove harnesses on the Harnesses page of Settings. Under the table it lists your recent folders that are not harnesses yet, each with an **Add** button that saves it as a harness named after the folder.
 
 ### Model and advisor
 
