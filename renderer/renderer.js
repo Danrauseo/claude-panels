@@ -85,6 +85,35 @@ const TERM_THEMES = {
   },
 };
 
+// Fixed-width fonts the Font menu offers, if they are installed on this Mac.
+const MONO_FONTS = [
+  'SF Mono', 'Menlo', 'Monaco', 'JetBrains Mono', 'Fira Code', 'IBM Plex Mono', 'Source Code Pro', 'Cascadia Code',
+  'Berkeley Mono', 'Geist Mono', 'Commit Mono', 'Iosevka', 'Hack', 'Roboto Mono', 'DM Mono', 'PT Mono',
+  'Andale Mono', 'Courier New',
+];
+let installedFontList = null;
+
+// A font is installed if text drawn in it is a different width from text in the fallback fonts.
+function installedFonts() {
+  if (installedFontList) return installedFontList;
+  const ctx = document.createElement('canvas').getContext('2d');
+  const sample = 'mmmmmmmmmmlliWW@#0O';
+  const width = (font) => {
+    ctx.font = `40px ${font}`;
+    return ctx.measureText(sample).width;
+  };
+  const bases = ['monospace', 'sans-serif', 'serif'].map((b) => [b, width(b)]);
+  installedFontList = MONO_FONTS.filter((f) => bases.some(([b, w]) => width(`"${f}", ${b}`) !== w));
+  if (!installedFontList.includes('Menlo')) installedFontList.unshift('Menlo');
+  return installedFontList;
+}
+
+// SF Mono comes inside Apple's Terminal app, so other apps such as this one can use it only once it is
+// installed in Font Book. Menlo is on every Mac.
+function termFont(name = settings?.fontFamily) {
+  return `"${name || 'Menlo'}", Menlo, monospace`;
+}
+
 function termTheme() {
   return TERM_THEMES[settings?.theme === 'blue' ? 'blue' : 'claude'];
 }
@@ -767,7 +796,7 @@ async function launch(panel, dir, { resumeId = null, title = null, harnessName =
   panel.body.append(host);
 
   const term = new Terminal({
-    fontFamily: '"SF Mono", Menlo, Monaco, monospace',
+    fontFamily: termFont(),
     fontSize: settings.fontSize,
     theme: termTheme(),
     cursorBlink: true,
@@ -2634,9 +2663,26 @@ function openSettings(page) {
   document.getElementById('auto-cvs').checked = settings.autoCVs !== false;
   document.getElementById('classic-display').checked = Boolean(settings.classicDisplay);
   document.getElementById('theme').value = settings.theme === 'blue' ? 'blue' : 'claude';
+  const fontMenu = document.getElementById('font-family');
+  const fonts = installedFonts();
+  const current = settings.fontFamily || 'Menlo';
+  fontMenu.innerHTML = '';
+  for (const f of fonts.includes(current) ? fonts : [current, ...fonts]) {
+    const o = el('option', null, f);
+    o.value = f;
+    fontMenu.append(o);
+  }
+  fontMenu.value = current;
+  showFontPreview();
   renderHarnessList();
   settingsDialog.showModal();
 }
+
+function showFontPreview() {
+  const preview = document.getElementById('font-preview');
+  preview.style.fontFamily = termFont(document.getElementById('font-family').value);
+}
+document.getElementById('font-family').addEventListener('change', showFontPreview);
 
 form.querySelectorAll('input[name="fileMode"]').forEach((radio) =>
   radio.addEventListener('change', () => showPromptFor(currentMode()))
@@ -2670,11 +2716,13 @@ settingsDialog.addEventListener('close', async () => {
     autoCVs: document.getElementById('auto-cvs').checked,
     classicDisplay: document.getElementById('classic-display').checked,
     theme: document.getElementById('theme').value,
+    fontFamily: document.getElementById('font-family').value || 'Menlo',
   });
   applyTheme();
   for (const p of panels) {
     if (p.term) {
       p.term.options.fontSize = fontSize;
+      p.term.options.fontFamily = termFont();
       p.fit.fit();
     }
   }

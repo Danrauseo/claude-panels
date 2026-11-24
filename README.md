@@ -224,11 +224,15 @@ A session that has worked on something for a while knows a lot about it. The app
 
 ⌘K shows each session's CV summary and searches the CVs, and the stack view shows a session's CV when you hover over it. Turn CVs off in Settings.
 
-## Colours
+## Colours and font
 
 The app uses the colours of claude.ai: warm dark greys, cream text and orange highlights, in the terminals and around them. To go back to the earlier blue colours, choose **Blue** under **Settings > Display > Colours**. The change applies straight away.
 
 The app sets the terminal's background, its text colour and its 16 standard colours. Claude Code chooses its own layout and most of its own colours, so those look the same in either setting.
+
+**Settings > Display > Font** sets the terminal font. It lists the fixed-width fonts installed on your Mac, with a preview, and Menlo is the default. SF Mono comes inside Apple's Terminal app, so it only appears in the list once you install it in Font Book.
+
+Claude Code draws everything inside the terminal, including how it describes each tool it uses, such as "Reading 1 file…". The app cannot change that text.
 
 ## Copying text
 

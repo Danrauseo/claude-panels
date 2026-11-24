@@ -31,6 +31,7 @@ const DEFAULT_SETTINGS = {
   prompts: { ...DEFAULT_PROMPTS },
   claudeCommand: 'claude',
   fontSize: 13,
+  fontFamily: 'Menlo', // the terminal font
   theme: 'claude', // the app's colours: 'claude' (the warm colours of claude.ai) or 'blue'
   oddLayout: 'bottom', // where the last panel goes when an odd number are open: 'bottom' | 'side'
   workspace: [], // the open panels, saved so they can be restored with ⌘R
