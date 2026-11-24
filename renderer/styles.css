@@ -22,6 +22,31 @@
 
 * { box-sizing: border-box; }
 
+/* The Claude colours: the warm greys, cream text and orange of claude.ai. */
+body.theme-claude {
+  --bg: #1f1e1d;
+  --panel: #262624;
+  --panel-head: #262624;
+  --border: rgba(240, 238, 230, 0.08);
+  --border-strong: rgba(240, 238, 230, 0.14);
+  --text: #ece9e0;
+  --muted: #a29f95;
+  --faint: #6f6c64;
+  --hover: rgba(240, 238, 230, 0.05);
+  --btn: rgba(240, 238, 230, 0.06);
+  --btn-hover: rgba(240, 238, 230, 0.1);
+  --btn-border: rgba(240, 238, 230, 0.1);
+  --accent: #d97757;
+  --accent-hover: #e38a6b;
+  --accent-text: #f2b9a3;
+  --focus: rgba(217, 119, 87, 0.55);
+  --select: rgba(217, 119, 87, 0.14);
+}
+body.theme-claude .btn.primary, body.theme-claude .side-btn.on .side-count { color: #1f1e1d; }
+body.theme-claude .panel.focused { box-shadow: 0 0 0 3px rgba(217, 119, 87, 0.1); }
+body.theme-claude .side-row.selected, body.theme-claude .tree-row.selected { border-color: rgba(217, 119, 87, 0.3); }
+body.theme-claude .tree-elbow { border-color: rgba(217, 119, 87, 0.32); }
+
 html, body {
   margin: 0;
   height: 100%;
@@ -303,6 +328,7 @@ legend { font-weight: 600; margin-bottom: 5px; }
 .field input:focus, .field textarea:focus, .harness-add input:focus { outline: none; border-color: var(--focus); }
 .field textarea { resize: vertical; line-height: 1.4; }
 .field input[type="number"] { width: 60px; }
+.settings-page .field select { width: 120px; padding: 5px 8px; font-size: 12.5px; }
 .field .link-btn { align-self: flex-start; font-size: 11px; }
 .field[hidden] { display: none; }
 code { font-family: "SF Mono", Menlo, monospace; font-size: 11px; color: var(--accent-text); }
@@ -318,7 +344,7 @@ code { font-family: "SF Mono", Menlo, monospace; font-size: 11px; color: var(--a
 .harness-name { display: flex; flex-direction: column; min-width: 0; }
 .harness-name .label { font-family: "SF Mono", Menlo, monospace; color: var(--accent-text); }
 .harness-name .detail { color: var(--muted); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.harness-row select {
+.harness-row select, .field select {
   width: 100%; background: var(--btn); color: var(--text); border: 1px solid var(--btn-border); border-radius: 6px;
   font: inherit; font-size: 12px; padding: 3px 6px;
 }
@@ -751,6 +777,7 @@ body > .approval-card { position: fixed; }
 .side-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
 .side-bottom { display: flex; align-items: center; gap: 6px; padding-left: 15px; min-width: 0; font-size: 11px; color: var(--muted); }
 .side-bottom .harness { font: 600 10px "SF Mono", Menlo, monospace; padding: 0 6px; border-radius: 8px; color: hsl(var(--hue, 220), 70%, 82%); background: hsla(var(--hue, 220), 55%, 35%, 0.35); border: 1px solid hsla(var(--hue, 220), 60%, 55%, 0.45); max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.side-bottom .tree-shared { font-size: 10px; padding: 0 6px; border-radius: 8px; color: var(--muted); border: 1px dashed var(--border-strong); white-space: nowrap; cursor: default; }
 .side-num { color: var(--faint); font-variant-numeric: tabular-nums; }
 .side-state { margin-left: auto; white-space: nowrap; }
 .side-row.asking .side-state { color: #e7c98a; }

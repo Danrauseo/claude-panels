@@ -31,6 +31,7 @@ const DEFAULT_SETTINGS = {
   prompts: { ...DEFAULT_PROMPTS },
   claudeCommand: 'claude',
   fontSize: 13,
+  theme: 'claude', // the app's colours: 'claude' (the warm colours of claude.ai) or 'blue'
   oddLayout: 'bottom', // where the last panel goes when an odd number are open: 'bottom' | 'side'
   workspace: [], // the open panels, saved so they can be restored with ⌘R
   harnesses: [], // [{ name, path }] started with /name
@@ -115,9 +116,11 @@ function panelsPrompt(number, name) {
     'You can also open a new terminal with the panels open_terminal tool. It starts a new Claude session in the ' +
     'harness or folder you choose and gives it your task, and that session reports back to you with SendMessage. ' +
     'It runs in the background by default, listed in the sidebar of the app, so it does not take space on screen. ' +
-    'The terminals you open form your job. Name it with set_job, which can also make it open to other terminals ' +
-    '(it is closed by default). When every terminal in the job has reported back and you have told the user ' +
-    'the result, call wrap_up_job to close them. ' +
+    'The terminals you open are grouped into jobs, shown in the sidebar. Give each separate piece of work its own ' +
+    'job name with the job field of open_terminal, so each job can be wrapped up on its own. With set_job you can ' +
+    'rename a job, make it open to other terminals (it is closed by default), or add a terminal you already opened ' +
+    'to another of your jobs. When every terminal in a job has reported back and you have told the user the ' +
+    'result, call wrap_up_job with that job name to close them. A terminal that another job also uses stays open. ' +
     'To run several terminals at the same time and carry on only when they have all finished, open each one with ' +
     'wait set to true, then call wait_for_report with their numbers. It returns their reports as its result. ' +
     'If you run in Code Mode, you can open them and wait for them from one piece of code. ' +
@@ -305,7 +308,7 @@ function placesForClaude() {
   };
 }
 
-async function openForClaude({ from, task, harness, folder, background, wait }) {
+async function openForClaude({ from, task, harness, folder, background, wait, job }) {
   task = String(task || '').trim();
   if (!task) throw new Error('Give the new terminal a task.');
   if (task.length > 6000) throw new Error('The task is too long. Keep it under 6,000 characters.');
@@ -348,7 +351,7 @@ async function openForClaude({ from, task, harness, folder, background, wait }) 
   const id = crypto.randomUUID();
   const result = await new Promise((resolve) => {
     openWaiting.set(id, resolve);
-    win.webContents.send('panels:open-request', id, { from: requester.number, folder: dir, harnessName, task, background: background !== false, wait: Boolean(wait) });
+    win.webContents.send('panels:open-request', id, { from: requester.number, folder: dir, harnessName, task, background: background !== false, wait: Boolean(wait), job: job ? String(job).trim().slice(0, 80) : null });
     setTimeout(() => resolve({ error: 'The app did not open the terminal in time.' }), 30000);
   });
   openWaiting.delete(id);
@@ -1074,7 +1077,7 @@ function createWindow() {
     height: 900,
     minWidth: 600,
     minHeight: 400,
-    backgroundColor: '#0c0e13',
+    backgroundColor: settings.theme === 'blue' ? '#0c0e13' : '#1f1e1d',
     titleBarStyle: 'hiddenInset',
     title: 'Claude Panels',
     webPreferences: {

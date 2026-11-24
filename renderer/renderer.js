@@ -42,18 +42,57 @@ let peeked = null; // the background panel shown in the peek drawer
 let sidebarOpen = false;
 let backgroundCount = 0;
 let busyCount = 0; // panels on screen that are running subagents, last time the sidebar was drawn
-// A job is the set of terminals one terminal (its owner) has opened. Its owner number maps to
-// { title, access: 'closed' | 'open', requests: [], wrapping }. The members are the open panels whose
-// openedBy is the owner. In a closed job, other terminals need the user's permission to use a member.
+// A job is one piece of work, done by terminals that one terminal (its owner) has opened. An owner can
+// have several jobs. A job's id maps to { id, owner, title, named, access: 'closed' | 'open', members,
+// requests: [], wrapping, used }, where members is a Set of terminal numbers. A terminal can be in more
+// than one job, for example when another job's terminal gives it work. Wrapping up a job closes only the
+// terminals that no other job uses. In a closed job, other terminals need the user's permission to use a member.
 const jobs = new Map();
+let nextJobId = 1;
 
-const TERM_THEME = {
-  background: '#12151b',
-  foreground: '#e4e7ec',
-  cursor: '#9fb4ff',
-  cursorAccent: '#12151b',
-  selectionBackground: '#2b3a63',
+// Terminal colours for each colour scheme in Settings. "claude" uses the warm greys, cream text and orange
+// of claude.ai, with a matching set of the 16 standard terminal colours.
+const TERM_THEMES = {
+  blue: {
+    background: '#12151b',
+    foreground: '#e4e7ec',
+    cursor: '#9fb4ff',
+    cursorAccent: '#12151b',
+    selectionBackground: '#2b3a63',
+  },
+  claude: {
+    background: '#262624',
+    foreground: '#ece9e0',
+    cursor: '#d97757',
+    cursorAccent: '#262624',
+    selectionBackground: '#5a4237',
+    black: '#1f1e1d',
+    red: '#e0705a',
+    green: '#8db86f',
+    yellow: '#e3b25e',
+    blue: '#7fa3d6',
+    magenta: '#c48fc4',
+    cyan: '#74b5ad',
+    white: '#c2c0b6',
+    brightBlack: '#75726a',
+    brightRed: '#f08a74',
+    brightGreen: '#a6cf86',
+    brightYellow: '#f0c97a',
+    brightBlue: '#9dbbe6',
+    brightMagenta: '#d6a8d6',
+    brightCyan: '#93cbc4',
+    brightWhite: '#faf9f5',
+  },
 };
+
+function termTheme() {
+  return TERM_THEMES[settings?.theme === 'blue' ? 'blue' : 'claude'];
+}
+
+function applyTheme() {
+  document.body.classList.toggle('theme-claude', settings.theme !== 'blue');
+  for (const p of panels) if (p.term) p.term.options.theme = termTheme();
+}
 
 // ---------- Helpers ----------
 
@@ -423,9 +462,10 @@ function closePanel(panel, { confirmed = false } = {}) {
   applyLayout();
   const shown = visiblePanels();
   // A job ends when its owner closes or its last member closes.
-  if (jobs.has(panel.number)) endJob(panel.number);
-  const owner = panel.openedBy;
-  if (owner && jobs.has(owner) && !jobs.get(owner).wrapping && !panels.some((p) => p.openedBy === owner)) endJob(owner);
+  for (const job of [...jobs.values()]) {
+    if (job.owner === panel.number) endJob(job.id);
+    else if (job.members.delete(panel.number) && !job.wrapping && !jobMembers(job).length) endJob(job.id);
+  }
   if (focused === panel || !panels.includes(focused)) setFocus(shown.includes(panels[i]) ? panels[i] : shown[shown.length - 1] || null);
   saveWorkspace();
   drawStatusLine();
@@ -729,7 +769,7 @@ async function launch(panel, dir, { resumeId = null, title = null, harnessName =
   const term = new Terminal({
     fontFamily: '"SF Mono", Menlo, Monaco, monospace',
     fontSize: settings.fontSize,
-    theme: TERM_THEME,
+    theme: termTheme(),
     cursorBlink: true,
     allowProposedApi: true,
     macOptionIsMeta: true,
@@ -1154,40 +1194,56 @@ function sessionState(p) {
 
 // Every row of the tree in order, each with its depth and the key of its parent row.
 function treeNodes() {
-  const bg = panels.filter((p) => p.inBackground && p.cwd);
   const nodes = [];
-  const owners = new Set(
-    [...jobs.keys()].filter((n) => panels.some((p) => p.number === n && p.cwd) && panels.some((p) => p.cwd && p.openedBy === n))
-  );
-  const add = (p, depth, parent) => {
-    const isJob = owners.has(p.number);
-    const kind = isJob ? 'job' : p.inBackground ? 'session' : 'coord';
-    nodes.push({ key: 'p' + p.number, kind, depth, parent, panel: p });
+  const byNumber = (a, b) => a.number - b.number;
+  // A row for a terminal, with its subagents under it. A terminal in two jobs is listed under each,
+  // so its key starts with the job's key.
+  const addPanel = (p, depth, parent, kind, prefix = '') => {
+    const key = prefix + 'p' + p.number;
+    nodes.push({ key, kind, depth, parent, panel: p });
     for (const a of p.agents || []) {
-      nodes.push({ key: `a${p.number}:${a.id || a.description}`, kind: 'agent', depth: depth + 1, parent: 'p' + p.number, agent: a, panel: p });
+      nodes.push({ key: `${prefix}a${p.number}:${a.id || a.description}`, kind: 'agent', depth: depth + 1, parent: key, agent: a, panel: p });
     }
-    if (kind !== 'session' || depth === 0) {
-      // A job lists all its members, in the background or not. Otherwise only background sessions are listed.
-      const children = (isJob ? panels.filter((c) => c.cwd && c.openedBy === p.number) : bg.filter((c) => c.openedBy === p.number))
-        .filter((c) => c !== p)
-        .sort((x, y) => x.number - y.number);
-      for (const child of children) add(child, depth + 1, 'p' + p.number);
+    return key;
+  };
+
+  // Each job with members gets a card, listed in place of its owner's row.
+  const cards = [...jobs.values()].filter((j) => panels.some((p) => p.number === j.owner && p.cwd) && jobMembers(j).length);
+  const inJob = new Set(cards.flatMap((j) => jobMembers(j).map((p) => p.number)));
+  const cardsOf = (n) => cards.filter((j) => j.owner === n).sort((a, b) => a.id - b.id);
+
+  // Background sessions that are in no job are listed under the terminal that opened them, if it is listed.
+  const loose = panels.filter((p) => p.cwd && p.inBackground && !inJob.has(p.number));
+  const openers = new Set(loose.map((p) => p.openedBy).filter((n) => n && panels.some((o) => o.number === n && o.cwd && !inJob.has(n))));
+  const roots = panels
+    .filter(
+      (p) =>
+        p.cwd &&
+        !inJob.has(p.number) &&
+        (cardsOf(p.number).length || openers.has(p.number) || (p.inBackground && !openers.has(p.openedBy)) || (p.agents || []).length)
+    )
+    .sort(byNumber);
+
+  for (const p of roots) {
+    const own = cardsOf(p.number);
+    const looseChildren = loose.filter((c) => c.openedBy === p.number && c !== p).sort(byNumber);
+    if (!own.length) {
+      const key = addPanel(p, 0, null, p.inBackground ? 'session' : 'coord');
+      for (const c of looseChildren) addPanel(c, 1, key, 'session');
+      continue;
     }
-  };
-  const openers = new Set(bg.map((p) => p.openedBy).filter((n) => n && panels.some((o) => o.number === n && o.cwd)));
-  for (const n of owners) openers.add(n);
-  let roots = panels.filter((p) => p.cwd && (openers.has(p.number) || (p.inBackground && !openers.has(p.openedBy))));
-  const listed = () => {
-    nodes.length = 0;
-    roots.sort((a, b) => a.number - b.number).forEach((r) => add(r, 0, null));
-    return new Set(nodes.map((n) => n.key));
-  };
-  // A panel running subagents that is not already in a branch gets a branch of its own.
-  const keys = listed();
-  const missing = panels.filter((p) => p.cwd && (p.agents || []).length && !keys.has('p' + p.number));
-  if (missing.length) {
-    roots = [...roots, ...missing];
-    listed();
+    own.forEach((job, i) => {
+      const key = 'j' + job.id;
+      nodes.push({ key, kind: 'job', depth: 0, parent: null, panel: p, job });
+      // The owner's own subagents and loose sessions go under its first job.
+      if (i === 0) {
+        for (const a of p.agents || []) {
+          nodes.push({ key: `a${p.number}:${a.id || a.description}`, kind: 'agent', depth: 1, parent: key, agent: a, panel: p });
+        }
+        for (const c of looseChildren) addPanel(c, 1, key, 'session');
+      }
+      for (const m of jobMembers(job).sort(byNumber)) addPanel(m, 1, key, 'session', key + ':');
+    });
   }
   return nodes;
 }
@@ -1217,9 +1273,18 @@ function treeRowContent(node) {
   const top = el('span', 'side-top');
   top.append(el('span', `tree-mark ${state}`), el('span', 'tree-title', p.title || p.name || `Terminal ${p.number}`));
   const bottom = el('span', 'side-bottom');
-  bottom.append(el('span', 'side-num', p.number <= 9 ? `⌘${p.number}` : String(p.number)), pill(), el('span', 'side-state', words));
+  bottom.append(el('span', 'side-num', p.number <= 9 ? `⌘${p.number}` : String(p.number)), pill());
+  // A session listed under a job that another job also uses says so.
+  const inJob = node.parent && node.parent.startsWith('j') ? jobs.get(Number(node.parent.slice(1))) : null;
+  const others = inJob ? jobsWith(p.number).filter((j) => j !== inJob).map((j) => `"${j.title}"`) : [];
+  if (others.length) {
+    const tag = el('span', 'tree-shared', 'Shared');
+    tag.title = `Also in ${others.join(' and ')}. Wrapping up one job leaves it open while another job uses it.`;
+    bottom.append(tag);
+  }
+  bottom.append(el('span', 'side-state', words));
   parts.push(top, bottom);
-  return { parts, sig: `s|${p.number}|${p.title}|${label}|${state}|${words}`, state };
+  return { parts, sig: `s|${p.number}|${p.title}|${label}|${state}|${words}|${others.join(',')}`, state };
 }
 
 function drawSidebar() {
@@ -1348,19 +1413,68 @@ const LOCK_CLOSED =
 const LOCK_OPEN =
   '<svg viewBox="0 0 12 12"><rect x="2" y="5.5" width="8" height="5.5" rx="1.2" fill="currentColor"/><path d="M4 5.5V4a2 2 0 0 1 3.9-.6" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>';
 
-function newJob(owner) {
-  return { title: owner.title || owner.harnessName || baseName(owner.cwd || '') || `Terminal ${owner.number}`, access: 'closed', requests: [], wrapping: false };
+function newJob(owner, title) {
+  const job = {
+    id: nextJobId++,
+    owner: owner.number,
+    title: (title && String(title).trim().slice(0, 80)) || owner.title || owner.harnessName || baseName(owner.cwd || '') || `Terminal ${owner.number}`,
+    named: Boolean(title && String(title).trim()),
+    access: 'closed',
+    members: new Set(),
+    requests: [],
+    wrapping: false,
+    used: Date.now(),
+  };
+  jobs.set(job.id, job);
+  return job;
 }
 
-function jobMembers(owner) {
-  return panels.filter((p) => p.cwd && p.openedBy === owner);
+// The open terminals in a job, not counting its owner.
+function jobMembers(job) {
+  return panels.filter((p) => p.cwd && job.members.has(p.number) && p.number !== job.owner);
 }
 
-function jobProgress(owner) {
-  const job = jobs.get(owner);
-  const members = jobMembers(owner);
-  const working = members.filter((p) => p.running && p.lightState === 'working' && !p.needsApproval).length;
-  const asking = members.filter((p) => p.running && p.needsApproval).length + job.requests.length;
+function jobsOwnedBy(number) {
+  return [...jobs.values()].filter((j) => j.owner === number).sort((a, b) => b.used - a.used);
+}
+
+function jobsWith(number) {
+  return [...jobs.values()].filter((j) => j.members.has(number)).sort((a, b) => a.id - b.id);
+}
+
+function sameName(a, b) {
+  return String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
+}
+
+// The job an owner means: the one with this name, or, with no name, the one it used last.
+function findJob(owner, name) {
+  const own = jobsOwnedBy(owner);
+  return name ? own.find((j) => sameName(j.title, name)) || null : own[0] || null;
+}
+
+// The job a new terminal from this owner joins. A new name starts a new job. With no name, the job used
+// last, or a new one.
+function jobForOpen(owner, name) {
+  const job = findJob(owner.number, name) || newJob(owner, name);
+  job.used = Date.now();
+  return job;
+}
+
+// Members that another job also uses. Wrap up leaves them open.
+function sharedMembers(job) {
+  return jobMembers(job).filter((p) => jobsWith(p.number).some((o) => o !== job));
+}
+
+function jobProgress(job) {
+  const members = jobMembers(job);
+  const shared = new Set(sharedMembers(job));
+  const isWorking = (p) => p.running && p.lightState === 'working' && !p.needsApproval;
+  const isAsking = (p) => p.running && p.needsApproval;
+  const working = members.filter(isWorking).length;
+  const asking = members.filter(isAsking).length + job.requests.length;
+  // Wrap up is ready when the terminals it would close have finished. Shared ones stay open, so they do not count.
+  const toClose = members.filter((p) => !shared.has(p));
+  const busy = toClose.filter(isWorking).length + toClose.filter(isAsking).length + job.requests.length;
   const text = job.wrapping
     ? 'Wrapping up'
     : asking
@@ -1368,21 +1482,21 @@ function jobProgress(owner) {
       : working
         ? `${working} working`
         : 'All finished';
-  return { members, working, asking, text, ready: !job.wrapping && members.length > 0 && working === 0 && asking === 0 };
+  return { members, shared: shared.size, working, asking, busy, text, ready: !job.wrapping && members.length > 0 && busy === 0 };
 }
 
-function endJob(owner) {
-  const job = jobs.get(owner);
+function endJob(id) {
+  const job = jobs.get(id);
   if (!job) return;
   for (const r of job.requests) r.resolve({ decision: 'deny', reason: 'The job has ended.' });
-  jobs.delete(owner);
+  jobs.delete(id);
   saveWorkspace();
 }
 
 function jobRowContent(node, label) {
-  const owner = node.panel.number;
-  const job = jobs.get(owner);
-  const progress = jobProgress(owner);
+  const job = node.job;
+  const owner = job.owner;
+  const progress = jobProgress(job);
   const parts = [];
 
   // First line: the job's name, and whether it is closed or open.
@@ -1391,7 +1505,7 @@ function jobRowContent(node, label) {
   mark.style.setProperty('--hue', harnessColour(label));
   const access = el('span', 'job-access');
   access.dataset.action = 'access';
-  access.dataset.owner = String(owner);
+  access.dataset.job = String(job.id);
   access.title =
     job.access === 'closed'
       ? 'Closed: other terminals need your permission to use this job. Click to open it.'
@@ -1399,17 +1513,16 @@ function jobRowContent(node, label) {
   access.innerHTML = (job.access === 'closed' ? LOCK_CLOSED : LOCK_OPEN) + (job.access === 'closed' ? 'Closed' : 'Open');
   top.append(mark, el('span', 'job-title', job.title), access);
 
-  // Second line: who owns it, how it is going, and Wrap up.
+  // Second line: how it is going, who owns it, and Wrap up.
   const meta = el('span', 'job-meta');
   const about = el('span', 'job-about');
   // The status goes first, so it still shows when the line is too long.
   about.append(el('span', progress.asking ? 'job-needs' : null, progress.text), el('span', null, '  ·  '), el('span', 'side-num', owner <= 9 ? `⌘${owner}` : String(owner)), el('span', null, ` ${label}`));
   const wrap = el('span', 'btn job-btn' + (progress.ready ? ' ready' : ''), job.wrapping ? 'Wrapping up…' : 'Wrap up');
   wrap.dataset.action = 'wrap';
-  wrap.dataset.owner = String(owner);
-  wrap.title = progress.ready
-    ? 'Every session has finished. Close them all and keep their conversations.'
-    : 'Close every session in this job. Their conversations are kept.';
+  wrap.dataset.job = String(job.id);
+  const keep = progress.shared ? ` ${progress.shared === 1 ? 'One session is' : `${progress.shared} sessions are`} also in another job, so ${progress.shared === 1 ? 'it stays' : 'they stay'} open.` : '';
+  wrap.title = (progress.ready ? 'Close the sessions in this job. ' : 'Close the sessions in this job, even the busy ones. ') + 'Their conversations are kept.' + keep;
   meta.append(about, wrap);
   parts.push(top, meta);
 
@@ -1419,28 +1532,29 @@ function jobRowContent(node, label) {
     const who = `⌘${r.from.number} ${r.from.harnessName || baseName(r.from.cwd || '')}`;
     box.append(el('span', 'job-request-text', `${who} wants to ${r.tool === 'SendMessage' ? 'message' : 'read'} ${r.target.title || r.target.name}.`));
     const buttons = el('span', 'job-request-buttons');
-    for (const [action, text] of [['allow', 'Allow once'], ['deny', 'Deny']]) {
+    for (const [action, text] of [['allow', 'Allow'], ['deny', 'Deny']]) {
       const b = el('span', 'btn job-btn' + (action === 'allow' ? ' primary' : ''), text);
       b.dataset.action = action;
-      b.dataset.owner = String(owner);
+      b.dataset.job = String(job.id);
       b.dataset.request = r.id;
+      if (action === 'allow' && r.tool === 'SendMessage') b.title = `${r.target.title || r.target.name} also joins the job of ⌘${r.from.number}, so wrapping up either job leaves it open while the other still uses it.`;
       buttons.append(b);
     }
     box.append(buttons);
     parts.push(box);
   }
-  const sig = `j|${job.title}|${job.access}|${progress.text}|${progress.ready}|${job.wrapping}|${label}|${job.requests.map((r) => r.id).join(',')}`;
+  const sig = `j|${job.title}|${job.access}|${progress.text}|${progress.ready}|${progress.shared}|${job.wrapping}|${label}|${job.requests.map((r) => r.id).join(',')}`;
   return { parts, sig, state: '' };
 }
 
-function jobAction(owner, action, requestId) {
-  const job = jobs.get(owner);
+function jobAction(id, action, requestId) {
+  const job = jobs.get(id);
   if (!job) return;
   if (action === 'access') {
     job.access = job.access === 'closed' ? 'open' : 'closed';
     saveWorkspace();
   } else if (action === 'wrap') {
-    wrapUpJob(owner).catch((err) => showNotice('Could not wrap up the job', err.message));
+    wrapUpJob(job).catch((err) => showNotice('Could not wrap up the job', err.message));
   } else if (action === 'allow' || action === 'deny') {
     const r = job.requests.find((x) => x.id === requestId);
     if (r) r.resolve(action === 'allow' ? { decision: 'allow' } : { decision: 'deny', reason: r.denyReason });
@@ -1456,16 +1570,34 @@ function panelForTarget(target) {
   return panels.find((p) => p.cwd && p.name === clean) || null;
 }
 
+// When a terminal gives work to a terminal in someone else's job, that terminal joins the sender's job
+// too: the sender's own job used last, or the job the sender is part of. A sender with no job gets one
+// only when the user allowed it, so the work shows in the sidebar.
+function joinSenderJob(sender, target, { create }) {
+  let job = jobsOwnedBy(sender.number)[0] || jobsWith(sender.number)[0] || null;
+  if (!job && create) job = newJob(sender);
+  if (!job || job.members.has(target.number) || job.owner === target.number) return;
+  job.members.add(target.number);
+  job.used = Date.now();
+  saveWorkspace();
+}
+
 // Before one terminal messages or reads another, the app checks whether the other is in a closed job.
-// The owner and the job's own members may always use it. Anyone else needs the user's permission,
-// which the job's card in the sidebar asks for.
+// A job's owner and members may always use it. Anyone else needs the user's permission, which the
+// job's card in the sidebar asks for. A message also adds the terminal to the sender's job.
 function gateRequest({ from, to, tool }) {
   const target = panelForTarget(to);
   const sender = panels.find((p) => p.number === Number(from));
-  const owner = target?.openedBy;
-  const job = owner && jobs.get(owner);
-  if (!target || !sender || !job || job.access === 'open') return { decision: 'allow' };
-  if (sender === target || sender.number === owner || sender.openedBy === owner) return { decision: 'allow' };
+  if (!target || !sender || sender === target) return { decision: 'allow' };
+  const its = jobsWith(target.number);
+  if (!its.length || its.some((j) => j.owner === sender.number || j.members.has(sender.number))) return { decision: 'allow' };
+  const message = tool === 'SendMessage';
+  const job = its.find((j) => j.access === 'closed');
+  if (!job) {
+    if (message) joinSenderJob(sender, target, { create: false });
+    drawStatusLine();
+    return { decision: 'allow' };
+  }
   return new Promise((resolve) => {
     const request = {
       id: Math.random().toString(36).slice(2),
@@ -1473,13 +1605,14 @@ function gateRequest({ from, to, tool }) {
       target,
       tool,
       denyReason:
-        `The user did not allow terminal ${sender.number} to use ${target.name}. It is part of a closed job ` +
-        `owned by terminal ${owner}. Ask terminal ${owner} instead, or ask the user.`,
+        `The user did not allow terminal ${sender.number} to use ${target.name}. It is part of "${job.title}", a ` +
+        `closed job owned by terminal ${job.owner}. Ask terminal ${job.owner} instead, or ask the user.`,
     };
     const timer = setTimeout(() => request.resolve({ decision: 'deny', reason: 'Nobody answered the request in time.' }), 270000);
     request.resolve = (answer) => {
       clearTimeout(timer);
       job.requests = job.requests.filter((r) => r !== request);
+      if (answer.decision === 'allow' && message && panels.includes(sender) && panels.includes(target)) joinSenderJob(sender, target, { create: true });
       drawStatusLine();
       resolve(answer);
     };
@@ -1489,50 +1622,102 @@ function gateRequest({ from, to, tool }) {
   });
 }
 
-function setJobFromClaude({ from, title, access }) {
+function describeJobs(owner) {
+  return jobsOwnedBy(owner)
+    .filter((j) => jobMembers(j).length)
+    .map((j) => `"${j.title}"`)
+    .join(', ');
+}
+
+// set_job: name a job, set who may use it, and add terminals this one opened to it.
+function setJobFromClaude({ from, title, access, add }) {
   const owner = panels.find((p) => p.number === Number(from));
   if (!owner) throw new Error(`Terminal ${from} is not open.`);
-  if (owner.openedBy) throw new Error(`This terminal is part of terminal ${owner.openedBy}'s job, so it cannot have a job of its own.`);
-  if (!jobs.has(owner.number)) jobs.set(owner.number, newJob(owner));
-  const job = jobs.get(owner.number);
-  if (title && String(title).trim()) job.title = String(title).trim().slice(0, 80);
+  if (owner.openedBy) throw new Error(`This terminal was opened by terminal ${owner.openedBy}, so it cannot have a job of its own.`);
+  title = String(title || '').trim().slice(0, 80);
+  let job = findJob(owner.number, title);
+  if (!job && title) {
+    // A job that was made without a name takes the first name Claude gives, instead of a new job starting.
+    const last = findJob(owner.number);
+    const adding = Array.isArray(add) && add.length;
+    if (last && !last.named && !adding) {
+      job = last;
+      job.title = title;
+    } else {
+      job = newJob(owner, title);
+    }
+  }
+  if (!job) job = newJob(owner);
+  if (title) job.named = true;
   if (access === 'open' || access === 'closed') job.access = access;
+  const added = [];
+  for (const n of Array.isArray(add) ? add : []) {
+    const p = panels.find((x) => x.number === Number(n) && x.cwd);
+    if (!p) throw new Error(`Terminal ${n} is not open.`);
+    if (p === owner) continue;
+    if (!jobsOwnedBy(owner.number).some((j) => j.members.has(p.number))) {
+      throw new Error(`Terminal ${n} is not in any of your jobs. You can only add terminals you opened.`);
+    }
+    job.members.add(p.number);
+    added.push(p.number);
+  }
+  job.used = Date.now();
   saveWorkspace();
   drawStatusLine();
-  return { title: job.title, access: job.access, members: jobMembers(owner.number).length };
+  return { title: job.title, access: job.access, members: jobMembers(job).length, added };
+}
+
+// wrap_up_job: the job is named, or is the only one with terminals in it.
+function jobToWrapUp(from, name) {
+  const owner = Number(from);
+  if (name) {
+    const job = findJob(owner, name);
+    if (!job) throw new Error(`You have no job called "${name}". Your jobs are ${describeJobs(owner) || 'none'}.`);
+    return job;
+  }
+  const busy = jobsOwnedBy(owner).filter((j) => jobMembers(j).length);
+  if (!busy.length) throw new Error('This terminal has no job to wrap up.');
+  if (busy.length > 1) throw new Error(`You have ${busy.length} jobs: ${describeJobs(owner)}. Say which one to wrap up.`);
+  return busy[0];
 }
 
 // Wrapping up closes the job's sessions one at a time from the bottom of the tree upwards, so each branch
-// moves back into its parent. The owner's panel stays open. Conversations are kept, so ⌘K can resume them.
-async function wrapUpJob(owner, { byClaude = false } = {}) {
-  const job = jobs.get(owner);
-  if (!job) throw new Error('This terminal has no job to wrap up.');
+// moves back into its card. A session that another job also uses stays open and only leaves this job.
+// The owner's panel stays open. Conversations are kept, so ⌘K can resume them.
+async function wrapUpJob(job, { byClaude = false } = {}) {
   if (job.wrapping) throw new Error('The job is already being wrapped up.');
-  const progress = jobProgress(owner);
+  const progress = jobProgress(job);
   if (!progress.ready) {
-    const words = `${progress.working} still working and ${progress.asking} waiting for the user`;
-    if (byClaude) throw new Error(`Not wrapped up, because the job has ${words}. Wait until they have finished.`);
-    if (!confirm(`"${job.title}" has ${words}. Wrap it up anyway? Those sessions will stop, but their conversations are kept.`)) return { title: job.title, closed: 0 };
+    const words = `sessions that are still working or waiting for the user`;
+    if (byClaude) throw new Error(`Not wrapped up, because "${job.title}" has ${words}. Wait until they have finished.`);
+    if (!confirm(`"${job.title}" has ${words}. Wrap it up anyway? Those sessions will stop, but their conversations are kept.`)) return { title: job.title, closed: 0, kept: [] };
   }
   job.wrapping = true;
   toggleSidebar(true);
   drawStatusLine();
-  const order = treeNodes()
-    .filter((n) => n.kind !== 'agent' && n.panel.openedBy === owner)
-    .map((n) => n.panel)
-    .reverse();
+  const order = jobMembers(job).sort((a, b) => b.number - a.number);
   let closed = 0;
+  const kept = [];
   for (const p of order) {
     if (!panels.includes(p)) continue;
-    closePanel(p, { confirmed: true });
-    closed++;
+    // Checked now, not at the start, in case another job finished wrapping up in the meantime.
+    const other = jobsWith(p.number).find((o) => o !== job);
+    if (other) {
+      job.members.delete(p.number);
+      kept.push({ number: p.number, name: p.title || p.name, job: other.title });
+      drawStatusLine();
+    } else {
+      closePanel(p, { confirmed: true });
+      closed++;
+    }
     await new Promise((r) => setTimeout(r, 420));
   }
   job.wrapping = false;
-  endJob(owner);
+  endJob(job.id);
   drawStatusLine();
-  showNotice(`Wrapped up "${job.title}"`, `Closed ${closed} session${closed === 1 ? '' : 's'}. Their conversations are kept, so ⌘K can find and resume them.`);
-  return { title: job.title, closed };
+  const keptText = kept.map((k) => ` Kept ⌘${k.number} open because "${k.job}" also uses it.`).join('');
+  showNotice(`Wrapped up "${job.title}"`, `Closed ${closed} session${closed === 1 ? '' : 's'}. Their conversations are kept, so ⌘K can find and resume them.${keptText}`);
+  return { title: job.title, closed, kept };
 }
 
 // ---------- Stack view (⌘S) ----------
@@ -1695,7 +1880,7 @@ function currentWorkspace() {
       reportMode: p.reportMode || null,
       report: p.report || null,
       background: Boolean(p.inBackground),
-      job: jobs.has(p.number) ? { title: jobs.get(p.number).title, access: jobs.get(p.number).access } : null,
+      jobs: jobsOwnedBy(p.number).map((j) => ({ title: j.title, named: j.named, access: j.access, members: [...j.members] })),
     }));
 }
 
@@ -1714,6 +1899,17 @@ async function restoreWorkspace() {
   updateRestoreHint();
   if (view === 'stack') showGrid();
   const known = new Set((await api.listSessions()).map((s) => s.id));
+  // Jobs first, so the sidebar groups each terminal as it opens. Workspaces saved before there could be
+  // several jobs have one job per owner, made up of the terminals it opened.
+  for (const item of items) {
+    const saved = item.jobs || (item.job ? [{ ...item.job, members: items.filter((x) => x.openedBy === item.number).map((x) => x.number) }] : []);
+    for (const j of saved) {
+      const job = newJob({ number: item.number, title: item.title, harnessName: item.harnessName, cwd: item.cwd }, j.title);
+      job.named = Boolean(j.named);
+      job.access = j.access === 'open' ? 'open' : 'closed';
+      job.members = new Set((j.members || []).map(Number));
+    }
+  }
   for (const item of items) {
     if (!(await api.folderExists(item.cwd))) continue;
     const panel =
@@ -1723,11 +1919,16 @@ async function restoreWorkspace() {
     panel.openedBy = item.openedBy || null;
     panel.reportMode = item.reportMode || null;
     panel.report = item.report || null;
-    if (item.job) jobs.set(panel.number, { ...newJob(panel), ...item.job });
     // A session that never got a message has no saved file, so start a fresh one in that folder instead.
     const resumeId = item.sessionId && known.has(item.sessionId) ? item.sessionId : null;
     await launch(panel, item.cwd, { resumeId, title: item.title, harnessName: item.harnessName, name: resumeId ? item.name : null });
   }
+  // Forget terminals that could not be opened again, so a new terminal with the same number does not join.
+  for (const job of [...jobs.values()]) {
+    for (const n of job.members) if (!panels.some((p) => p.number === n && p.cwd)) job.members.delete(n);
+    if (!panels.some((p) => p.number === job.owner && p.cwd)) endJob(job.id);
+  }
+  drawStatusLine();
 }
 
 // ---------- Mentioned sessions (⌘↓ ⌘← ⌘→ ⌘↑) ----------
@@ -2432,6 +2633,7 @@ function openSettings(page) {
   document.getElementById('auto-titles').checked = settings.autoTitles !== false;
   document.getElementById('auto-cvs').checked = settings.autoCVs !== false;
   document.getElementById('classic-display').checked = Boolean(settings.classicDisplay);
+  document.getElementById('theme').value = settings.theme === 'blue' ? 'blue' : 'claude';
   renderHarnessList();
   settingsDialog.showModal();
 }
@@ -2467,7 +2669,9 @@ settingsDialog.addEventListener('close', async () => {
     autoTitles: document.getElementById('auto-titles').checked,
     autoCVs: document.getElementById('auto-cvs').checked,
     classicDisplay: document.getElementById('classic-display').checked,
+    theme: document.getElementById('theme').value,
   });
+  applyTheme();
   for (const p of panels) {
     if (p.term) {
       p.term.options.fontSize = fontSize;
@@ -2499,7 +2703,7 @@ api.onAppRequest(async (id, kind, payload) => {
   try {
     if (kind === 'gate') api.appResult(id, await gateRequest(payload));
     else if (kind === 'job') api.appResult(id, setJobFromClaude(payload));
-    else if (kind === 'wrap-up') api.appResult(id, await wrapUpJob(Number(payload.from), { byClaude: true }));
+    else if (kind === 'wrap-up') api.appResult(id, await wrapUpJob(jobToWrapUp(payload.from, payload.job), { byClaude: true }));
     else if (kind === 'report') api.appResult(id, takeReport(payload));
     else if (kind === 'reports') api.appResult(id, await waitForReports(payload));
     else api.appResult(id, { error: 'Unknown request.' });
@@ -2512,7 +2716,7 @@ document.getElementById('peek-hide').addEventListener('click', () => hidePeek())
 document.getElementById('peek-open').addEventListener('click', () => peeked && setBackground(peeked, false, { focus: true }));
 sideList.addEventListener('click', (e) => {
   const action = e.target.closest('[data-action]');
-  if (action) return jobAction(Number(action.dataset.owner), action.dataset.action, action.dataset.request);
+  if (action) return jobAction(Number(action.dataset.job), action.dataset.action, action.dataset.request);
   const row = e.target.closest('[data-number]');
   const panel = row && panels.find((p) => p.number === Number(row.dataset.number));
   if (!panel) return;
@@ -2640,6 +2844,7 @@ function updateTitles() {
 
 (async () => {
   settings = await api.getSettings();
+  applyTheme();
   restorable = settings.workspace || [];
   updateRestoreHint();
   applyLayout();
@@ -2661,7 +2866,8 @@ api.onOpenRequest(async (id, req) => {
     const panel = addPanel(undefined, { quiet: true, inBackground: Boolean(req.background) });
     panel.openedBy = from.number;
     panel.reportMode = req.wait ? 'result' : 'message';
-    if (!jobs.has(from.number)) jobs.set(from.number, newJob(from));
+    const job = jobForOpen(from, req.job);
+    job.members.add(panel.number);
     // A terminal that is waiting with wait_for_report gets the report through report_back instead of a message.
     const howToReport = req.wait
       ? `When you have finished, call the panels report_back tool with a short report. Terminal ${from.number} is ` +
@@ -2678,7 +2884,7 @@ api.onOpenRequest(async (id, req) => {
     if (panel.ptyId === null) throw new Error('The new terminal could not start Claude.');
     // A background session appears in the sidebar, so it needs no notice.
     if (!panel.inBackground) showOpenedNotice(from, panel, req.task);
-    api.openResult(id, { number: panel.number, name: panel.name, folder: req.folder });
+    api.openResult(id, { number: panel.number, name: panel.name, folder: req.folder, job: job.title });
   } catch (err) {
     api.openResult(id, { error: err.message });
   }

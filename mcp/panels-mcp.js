@@ -123,6 +123,13 @@ const TOOLS = [
             'panel on screen. The user can still look at it and answer its questions. Defaults to true. Set it to ' +
             'false only when the user will want to watch the new session or type into it.',
         },
+        job: {
+          type: 'string',
+          description:
+            'The name of the job this terminal is for, for example "Sefton pilot evaluation". Terminals with the ' +
+            'same job name are grouped together, and each job is wrapped up on its own. Use a new name for a ' +
+            'separate piece of work. Leave it out to use the job you used last.',
+        },
         wait: {
           type: 'boolean',
           description:
@@ -167,25 +174,42 @@ const TOOLS = [
   {
     name: 'set_job',
     description:
-      'Name the job made up of the terminals you open, and set who else may use them. The app groups the ' +
-      'terminals you open into one job, shown in its sidebar under your terminal. A closed job (the default) ' +
-      'means another terminal must get the user\'s permission before it messages or reads one of your ' +
-      'terminals. An open job lets any terminal use them. Call it before or after open_terminal.',
+      'Set up one of your jobs. The app groups the terminals you open into jobs, each shown in its sidebar as ' +
+      'a card. A closed job (the default) means another terminal must get the user\'s permission before it ' +
+      'messages or reads one of its terminals. An open job lets any terminal use them. You can also add a ' +
+      'terminal you opened for one job to another of your jobs, when it works on both. Wrapping up a job ' +
+      'leaves open any terminal that another job still uses.',
     inputSchema: {
       type: 'object',
       properties: {
-        title: { type: 'string', description: 'A short name for the job, for example "Sefton pilot evaluation".' },
+        title: {
+          type: 'string',
+          description:
+            'The job\'s name, for example "Sefton pilot evaluation". If you have no job by this name, a new one is ' +
+            'made, or the job you are using gets this name if it has none yet. Leave it out to change the job you used last.',
+        },
         access: { type: 'string', enum: ['closed', 'open'], description: 'Who may use the terminals in the job.' },
+        add: {
+          type: 'array',
+          items: { type: 'number' },
+          description: 'Numbers of terminals you already opened, to add to this job as well.',
+        },
       },
     },
   },
   {
     name: 'wrap_up_job',
     description:
-      'Close every terminal in your job once they have all finished and reported back to you. Their ' +
-      'conversations are kept, so the user can resume any of them later. It does nothing while a terminal ' +
-      'in the job is still working or waiting for the user. Tell the user what the job produced first.',
-    inputSchema: { type: 'object', properties: {} },
+      'Close the terminals in one of your jobs once they have all finished and reported back to you. A ' +
+      'terminal that another job also uses stays open. Their conversations are kept, so the user can resume ' +
+      'any of them later. It does nothing while a terminal it would close is still working or waiting for the ' +
+      'user. Tell the user what the job produced first.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        job: { type: 'string', description: 'The name of the job. You can leave it out if you have only one job.' },
+      },
+    },
   },
 ];
 
@@ -435,12 +459,12 @@ async function listHarnesses() {
 async function openTerminal(args) {
   const background = args.background !== false;
   const wait = args.wait === true;
-  const r = await askApp('/open', { from: SELF, task: args.task, harness: args.harness, folder: args.folder, background, wait });
+  const r = await askApp('/open', { from: SELF, task: args.task, harness: args.harness, folder: args.folder, background, wait, job: args.job });
   const where = background ? ' It runs in the background and is listed in the sidebar of the app.' : '';
   const how = wait
     ? `will hand in its report when it has finished. Call wait_for_report with terminal ${r.number} to get it.`
     : 'will send you a report with SendMessage when it has finished.';
-  return `Opened terminal ${r.number} (${r.name}) in ${r.folder}.${where} It has started on the task and ${how} Tell the user you opened terminal ${r.number} and why.`;
+  return `Opened terminal ${r.number} (${r.name}) in ${r.folder}, in the job "${r.job}".${where} It has started on the task and ${how} Tell the user you opened terminal ${r.number} and why.`;
 }
 
 // Asks the app about once a minute until every terminal has reported or the time runs out. Each ask
@@ -483,12 +507,14 @@ async function callTool(name, args) {
     return `Your report has been handed to terminal ${r.to} (${r.toName}). Now tell the user here what you did.`;
   }
   if (name === 'set_job') {
-    const r = await askApp('/job', { from: SELF, title: args.title, access: args.access });
-    return `Your job is "${r.title}" and it is ${r.access}. It has ${r.members} terminal${r.members === 1 ? '' : 's'} so far.`;
+    const r = await askApp('/job', { from: SELF, title: args.title, access: args.access, add: args.add });
+    const added = r.added && r.added.length ? ` Added terminal${r.added.length === 1 ? '' : 's'} ${r.added.join(', ')}.` : '';
+    return `The job "${r.title}" is ${r.access}. It has ${r.members} terminal${r.members === 1 ? '' : 's'} so far.${added}`;
   }
   if (name === 'wrap_up_job') {
-    const r = await askApp('/wrap-up', { from: SELF });
-    return `Wrapped up "${r.title}". Closed ${r.closed} terminal${r.closed === 1 ? '' : 's'}. Their conversations are kept.`;
+    const r = await askApp('/wrap-up', { from: SELF, job: args.job });
+    const kept = (r.kept || []).map((k) => ` Terminal ${k.number} stays open because "${k.job}" also uses it.`).join('');
+    return `Wrapped up "${r.title}". Closed ${r.closed} terminal${r.closed === 1 ? '' : 's'}. Their conversations are kept.${kept}`;
   }
   if (name === 'find_expert') return findExpert(args.task || '', Boolean(args.everywhere));
   if (name === 'ask_expert') return askExpert(args);

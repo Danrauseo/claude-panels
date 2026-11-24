@@ -157,11 +157,13 @@ A background session is a normal Claude Code terminal that keeps running without
 
 ## Jobs
 
-The terminals that one terminal opens make up its **job**. The job's card sits at the top of its branch in the Background list. It shows the job's name, whether it is closed or open, which terminal owns it, and how its sessions are getting on.
+A **job** is one piece of work, done by terminals that one terminal (the owner) has opened. One owner can run several jobs at the same time. Each job has its own card in the Background list, with its own sessions listed under it. The card shows the job's name, whether it is closed or open, which terminal owns it, and how its sessions are getting on.
 
-- **Naming it.** The owner's Claude can name the job with the `set_job` tool. Until then it takes the owner's title.
-- **Closed or open.** A job is closed to begin with. In a closed job, any other terminal that tries to message one of its sessions, or read or search its conversation, has to wait for you. The job's card shows what it wants, with **Allow once** and **Deny**. The owner and the job's own sessions never need to ask. Click **Closed** or **Open** on the card to change it, or the owner's Claude can change it with `set_job`.
-- **Wrap up.** When every session in the job has finished, the **Wrap up** button turns green. Clicking it closes the job's sessions one at a time from the bottom of the tree upwards, so each branch moves back into its parent, and then the job's card goes. The owner's own panel stays open. The conversations are kept, so ⌘K can find and resume them. If some sessions are still working, the app asks you first. The owner's Claude can also wrap the job up with `wrap_up_job`, but only once every session has finished.
+- **Which job a terminal joins.** When Claude opens a terminal with `open_terminal`, it gives a job name. Terminals with the same job name go in the same job, and a new name starts a new job. With no name, the terminal joins the job the owner used last.
+- **Naming it.** The owner's Claude can rename a job with the `set_job` tool. Until then it takes the owner's title.
+- **Shared sessions.** A session can be in more than one job. This happens when a terminal from another job gives it work by sending it a message, or when the owner's Claude adds it to a second job with `set_job`. A shared session is listed under each of its jobs, with a **Shared** label. Hold the mouse over the label to see which other jobs use it.
+- **Closed or open.** A job is closed to begin with. In a closed job, any other terminal that tries to message one of its sessions, or read or search its conversation, has to wait for you. The job's card shows what it wants, with **Allow** and **Deny**. If you allow a message, the session also joins the sender's job. The owner and the job's own sessions never need to ask. Click **Closed** or **Open** on the card to change it, or the owner's Claude can change it with `set_job`.
+- **Wrap up.** When every session that the job would close has finished, the **Wrap up** button turns green. Clicking it closes the job's sessions one at a time from the bottom of the tree upwards, and then the job's card goes. A session that another job also uses stays open and only leaves this job, and the notice says which ones were kept. The owner's own panel stays open. The conversations are kept, so ⌘K can find and resume them. If some sessions are still working, the app asks you first. The owner's Claude can also wrap a job up with `wrap_up_job`, giving the job's name, but only once its sessions have finished.
 - A job also ends when its owner closes or its last session closes.
 
 The check before messaging works through a Claude Code hook that the app adds when it starts each session. It only applies to sessions started by Claude Panels.
@@ -221,6 +223,12 @@ A session that has worked on something for a while knows a lot about it. The app
 - **Suggested experts.** After your first message in a new terminal, the app checks the CVs itself. If a past session in the same folder clearly matches what you asked, a small "Expert:" label appears in the top bar. Click it to tell Claude to use that session, or click × to dismiss it.
 
 ⌘K shows each session's CV summary and searches the CVs, and the stack view shows a session's CV when you hover over it. Turn CVs off in Settings.
+
+## Colours
+
+The app uses the colours of claude.ai: warm dark greys, cream text and orange highlights, in the terminals and around them. To go back to the earlier blue colours, choose **Blue** under **Settings > Display > Colours**. The change applies straight away.
+
+The app sets the terminal's background, its text colour and its 16 standard colours. Claude Code chooses its own layout and most of its own colours, so those look the same in either setting.
 
 ## Copying text
 
