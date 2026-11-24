@@ -985,9 +985,14 @@ async function checkUpdateNow() {
 }
 
 api.onUpdateAvailable(showUpdate);
-api.onUpdateProgress((text) => {
+// Each update step shows a short label, with a spinner while it runs, and a short detail on hover.
+api.onUpdateProgress((progress) => {
+  const { label, detail = '', busy = true } = typeof progress === 'string' ? { label: progress } : progress;
   updateBtn.hidden = false;
-  updateBtn.textContent = text;
+  updateBtn.textContent = '';
+  if (busy) updateBtn.append(el('span', 'update-spinner'));
+  updateBtn.append(document.createTextNode(label));
+  updateBtn.title = detail;
 });
 updateBtn.addEventListener('click', runUpdate);
 

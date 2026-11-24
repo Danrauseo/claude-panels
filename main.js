@@ -941,8 +941,9 @@ async function checkForUpdate() {
 ipcMain.handle('update:check', () => checkForUpdate());
 
 // Runs a step in the user's login shell so git, node and npm are found as they are in Terminal.
-function runStep(label, command, extraEnv = {}) {
-  send('update:progress', label);
+// The update button shows the short label with a spinner, and the detail when you hover over it.
+function runStep(label, detail, command, extraEnv = {}) {
+  send('update:progress', { label, detail, busy: true });
   return new Promise((resolve, reject) => {
     const child = spawn(userShell, ['-l', '-c', command], { cwd: sourceDir, env: { ...cleanEnv(), ...extraEnv } });
     let output = '';
@@ -960,20 +961,21 @@ ipcMain.handle('update:run', async (_e, workspace, tag) => {
     // Move the folder's branch forward to the release. This refuses to throw away local changes.
     // npm rewrites package-lock.json on some Macs, so that one file is put back first.
     await runStep(
-      'Downloading the new version…',
+      'Downloading',
+      'Getting the new version from GitHub.',
       'git checkout -- package-lock.json 2>/dev/null; git fetch --tags --quiet && git merge --ff-only --quiet "refs/tags/$CP_TAG"',
       { CP_TAG: tag }
     );
-    await runStep('Installing the parts the app needs…', 'npm install && (git checkout -- package-lock.json 2>/dev/null; true)');
-    await runStep('Building and signing the app. This takes a few minutes, and the first time macOS asks for your password to set up signing…', 'npm run dist');
+    await runStep('Preparing', 'Installing what the new version needs.', 'npm install && (git checkout -- package-lock.json 2>/dev/null; true)');
+    await runStep('Building', 'Takes a few minutes. The first time, macOS asks for your password.', 'npm run dist');
 
     if (!app.isPackaged) {
-      send('update:progress', 'Built. A test copy does not reinstall itself.');
+      send('update:progress', { label: 'Built', detail: 'A test copy does not reinstall itself.', busy: false });
       return { done: true };
     }
 
     // Replace this app with the new build, then restart it and bring the terminals back.
-    send('update:progress', 'Installing the new version…');
+    send('update:progress', { label: 'Installing', detail: 'The app restarts by itself when this is done.', busy: true });
     const bundle = path.resolve(path.dirname(app.getPath('exe')), '..', '..');
     const builtApp = ['mac-arm64', 'mac']
       .map((dir) => path.join(sourceDir, 'dist', dir, 'Claude Panels.app'))
