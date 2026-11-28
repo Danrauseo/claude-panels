@@ -95,7 +95,10 @@ function plainOutput(data) {
 function writeOutput(panel, data) {
   if (panel.marker) panel.marker.push(plainOutput(data));
   else panel.term.write(plainOutput(data));
-  if (panel.friendly) drawLivePreview(panel);
+  if (panel.friendly) {
+    drawLivePreview(panel);
+    checkFriendlyScreen(panel);
+  }
 }
 
 // Fonts that come with the app, in renderer/fonts. They are free fonts under the SIL Open Font License.
@@ -1279,30 +1282,82 @@ function readOtherScreen(p) {
     }
     carry = '';
     const plain = text.replace(/^[│┃╭╮╰╯─━\s]+|[│┃╭╮╰╯─━\s]+$/g, '');
-    if (plain) lines.push(plain);
+    // Leave out pictures drawn with blocks, stars and dots, such as the logo on the sign-in screen.
+    const visible = plain.replace(/\s/g, '');
+    const letters = (visible.match(/[A-Za-z0-9]/g) || []).length;
+    if (plain && (visible.length < 4 || letters / visible.length > 0.4)) lines.push(plain);
   }
   if (carry) lines.push(carry);
   const shown = lines.slice(-12);
+  const menu = readScreenMenu(rows, rule);
   // With no line across the panel anywhere, Claude Code is not drawing, so it has closed and left the
   // terminal at the shell, as it does after /logout or /exit.
   const closed = !rows.some((r) => rule.test(r)) && /[%$#❯>]\s*$/.test(filled.at(-1));
+  if (menu) return { lines: shown, menu, closed: false, key: menu.question + '|' + menu.options.map((o) => (o.selected ? '>' : '') + o.label).join('|') };
   return shown.length ? { lines: shown, key: shown.join('\n'), closed } : null;
+}
+
+// A menu drawn by Claude Code, such as the theme picker or /model: a list of lines in a column, one of
+// them marked with ❯. Returns its question, its choices and which one is selected.
+function readScreenMenu(rows, rule) {
+  const marked = /^(\s*)[❯›]\s+(?:\d+\.\s+)?(\S.*?)\s*$/;
+  let m = -1;
+  for (let i = rows.length - 1; i >= 0; i--) if (marked.test(rows[i])) { m = i; break; }
+  if (m < 0) return null;
+  const at = rows[m].search(/[❯›]\s+\S/);
+  const col = at + rows[m].slice(at + 1).search(/\S/) + 1; // where the choice's words start
+  const option = (r) => {
+    if (!r.trim() || rule.test(r)) return null;
+    const mk = marked.exec(r);
+    if (mk) return { label: mk[2], selected: true };
+    const start = r.search(/\S/);
+    if (Math.abs(start - col) > 1 && Math.abs(start - (col + 3)) > 1) return null;
+    return { label: r.trim().replace(/^\d+\.\s+/, ''), selected: false };
+  };
+  let first = m;
+  while (first > 0 && option(rows[first - 1])) first--;
+  let last = m;
+  while (last < rows.length - 1 && option(rows[last + 1])) last++;
+  const options = rows.slice(first, last + 1).map(option);
+  if (options.length < 2) return null;
+  let q = first - 1;
+  while (q >= 0 && !rows[q].trim()) q--;
+  const question = q >= 0 && !rule.test(rows[q]) ? rows[q].replace(/[│┃]/g, '').trim() : '';
+  return { question, options };
+}
+
+// Checks the terminal straight away, for when output arrives or after a button is pressed, so the card
+// keeps up with the screen. It runs at most every tenth of a second.
+function checkFriendlyScreen(panel) {
+  if (!panel.friendly || !panel.fv || panel.fv.screenTimer) return;
+  panel.fv.screenTimer = setTimeout(() => {
+    panel.fv.screenTimer = null;
+    const asking = readApproval(panel);
+    drawFriendlyScreen(panel, asking ? null : readOtherScreen(panel));
+  }, 100);
 }
 
 function drawFriendlyScreen(panel, screen) {
   const fv = panel.fv;
   if (!fv) return;
-  // A screen has to stay for two checks in a row, so a passing moment, such as Claude Code starting,
-  // does not flash a card.
-  if (!screen || screen.key !== fv.pendingScreen) {
-    fv.pendingScreen = screen?.key || null;
-    if (!screen) {
-      fv.screen.hidden = true;
-      fv.screenKey = null;
-    }
+  if (!screen) {
+    fv.pendingScreen = null;
+    fv.screen.hidden = true;
+    fv.screenKey = null;
     return;
   }
   if (fv.screenKey === screen.key) return;
+  // A new card waits a moment, so a passing screen, such as Claude Code starting, does not flash one.
+  // A card that is already showing follows the screen straight away.
+  if (fv.screen.hidden) {
+    if (screen.key !== fv.pendingScreen) {
+      fv.pendingScreen = screen.key;
+      fv.pendingAt = Date.now();
+      setTimeout(() => checkFriendlyScreen(panel), 260);
+      return;
+    }
+    if (Date.now() - fv.pendingAt < 250) return;
+  }
   fv.screenKey = screen.key;
 
   const text = screen.lines.join('\n');
@@ -1321,9 +1376,40 @@ function drawFriendlyScreen(panel, screen) {
     b.addEventListener('click', () => {
       api.write(panel.ptyId, seq);
       fv.input.focus();
+      checkFriendlyScreen(panel);
     });
     return b;
   };
+  if (screen.menu) {
+    // A menu becomes a list of choices. Choosing one moves Claude Code's selection to it with the arrow
+    // keys and presses Return, the same as doing it in the terminal.
+    const { question, options } = screen.menu;
+    const from = options.findIndex((o) => o.selected);
+    fv.screen.innerHTML = '';
+    fv.screen.append(el('div', 'fv-screen-title', question || 'Claude Code is asking you to choose'));
+    const list = el('div', 'fv-options');
+    options.forEach((o, i) => {
+      const b = el('button', `fv-option${o.selected ? ' on' : ''}`, o.label);
+      b.type = 'button';
+      b.addEventListener('click', () => {
+        const step = i > from ? '\x1b[B' : '\x1b[A';
+        const keys = [...Array(Math.abs(i - from)).fill(step), '\r'];
+        keys.forEach((k, n) => setTimeout(() => api.write(panel.ptyId, k), n * 30));
+        setTimeout(() => checkFriendlyScreen(panel), keys.length * 30 + 50);
+        fv.input.focus();
+      });
+      list.append(b);
+    });
+    fv.screen.append(list);
+    const actions = el('div', 'fv-screen-actions');
+    const term = el('button', 'link-btn', 'Open the terminal');
+    term.type = 'button';
+    term.addEventListener('click', () => setFriendly(panel, false));
+    actions.append(keys('Back (Esc)', '\x1b'), term);
+    fv.screen.append(actions);
+    fv.screen.hidden = false;
+    return;
+  }
   fv.screen.innerHTML = '';
   fv.screen.append(el('div', 'fv-screen-title', title));
   fv.screen.append(el('pre', 'fv-screen-text', text));
