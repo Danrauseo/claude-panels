@@ -1,4 +1,4 @@
-/* global Terminal, FitAddon, WebLinksAddon */
+/* global Terminal, FitAddon, WebLinksAddon, Explain */
 
 const api = window.panelsApi;
 const grid = document.getElementById('grid');
@@ -89,6 +89,12 @@ const TERM_THEMES = {
 // space instead. Both take one cell, so nothing else on the screen moves.
 function plainOutput(data) {
   return settings.simple?.plainSymbols ? data.replace(/\u23BF/g, ' ') : data;
+}
+
+// Output goes through the panel's term marker when Explain terms is on, so glossary terms are underlined.
+function writeOutput(panel, data) {
+  if (panel.marker) panel.marker.push(plainOutput(data));
+  else panel.term.write(plainOutput(data));
 }
 
 // Fonts that come with the app, in renderer/fonts. They are free fonts under the SIL Open Font License.
@@ -790,6 +796,164 @@ function registerFileLinks(term) {
   });
 }
 
+// ---------- Explain terms ----------
+
+// With the Explain box ticked on a harness, Claude adds the words that structure the work to a glossary
+// for that folder. The app underlines those words as they appear and explains one when the mouse is held
+// over it, like a tooltip in a strategy game. The underline fades as the user learns the word: bright while
+// it is new, dimmer once they have looked at it, faint once it is familiar, and gone once they know it.
+// The tooltip shrinks in the same way, from the full explanation to a one-line reminder.
+let glossaryData = { glossary: { folders: {} }, codex: { folders: {} } };
+const matchers = new Map(); // glossary key -> matcher
+const FAMILIAR_AFTER = 3; // looks at a term before the tooltip shows the one-line reminder first
+const KIND_LABELS = { part: 'Part of this work', idea: 'Idea', syntax: 'Syntax', process: 'Way of working' };
+
+async function loadGlossary() {
+  glossaryData = await api.getGlossary();
+  matchers.clear();
+  for (const p of panels) if (p.marker) p.marker.matcher = matcherFor(p.glossaryKey);
+  if (settingsDialog.open && settingsPage === 'glossary') renderCodex();
+}
+
+function matcherFor(key) {
+  if (!matchers.has(key)) matchers.set(key, Explain.buildMatcher(glossaryData.glossary.folders[key]?.terms));
+  return matchers.get(key);
+}
+
+function termProgress(key, term) {
+  const c = glossaryData.codex.folders[key]?.[term];
+  if (c?.known) return 'known';
+  if ((c?.seen || 0) >= FAMILIAR_AFTER) return 'familiar';
+  return c?.seen ? 'seen' : 'new';
+}
+
+// The underline for a term: a dotted line in the accent colour that fades as the term is learned.
+// A quiet dotted underline in the terminal's own text greys, so it reads as a hint rather than a
+// mistake. It dims as the term becomes familiar and goes once it is known.
+function underlineFor(key, term) {
+  const blue = settings.theme === 'blue';
+  const colour = {
+    new: blue ? '128;136;156' : '138;133;127',
+    seen: blue ? '92;99;116' : '102;98;94',
+    familiar: blue ? '64;70;84' : '72;70;67',
+  }[termProgress(key, term)];
+  return colour ? `\x1b[4:4m\x1b[58;2;${colour}m` : '';
+}
+
+function setUpExplain(panel, key) {
+  panel.glossaryKey = key;
+  panel.marker = new Explain.OutputMarker((d) => panel.term.write(d));
+  panel.marker.matcher = matcherFor(key);
+  panel.marker.styleFor = (term) => underlineFor(key, term);
+  const badge = panel.head.querySelector('.code-badge');
+  badge.textContent = [badge.textContent, 'Explain'].filter(Boolean).join(' · ');
+  badge.title = [badge.title, 'Words Claude adds to the glossary are underlined. Hold the mouse over one to see what it means.']
+    .filter(Boolean)
+    .join('\n');
+  // Terms are found again on the screen when the mouse moves, so a term written before it joined the
+  // glossary, or split across two pieces of output, still gets its tooltip.
+  panel.term.registerLinkProvider({
+    provideLinks(y, callback) {
+      const line = panel.term.buffer.active.getLine(y - 1)?.translateToString(true) ?? '';
+      const found = Explain.findTerms(line, matcherFor(key));
+      callback(
+        found.length
+          ? found.map((f) => ({
+              range: { start: { x: f.start + 1, y }, end: { x: f.end, y } },
+              text: f.text,
+              decorations: { underline: false, pointerCursor: false },
+              activate: (e) => showTip(key, f.key, e.clientX, e.clientY),
+              hover: (e) => tipHover(key, f.key, e),
+              leave: () => tipLeave(),
+            }))
+          : undefined
+      );
+    },
+  });
+}
+
+const tip = el('div', 'term-tip');
+tip.hidden = true;
+document.body.append(tip);
+let tipTimer = null;
+let tipShown = null; // { key, term }
+const lastSeen = new Map(); // "key term" -> when a look was last counted
+
+function tipHover(key, term, e) {
+  clearTimeout(tipTimer);
+  if (tipShown?.key === key && tipShown?.term === term && !tip.hidden) return;
+  const { clientX, clientY } = e;
+  tipTimer = setTimeout(() => showTip(key, term, clientX, clientY), 350);
+}
+
+function tipLeave() {
+  clearTimeout(tipTimer);
+  tipTimer = setTimeout(hideTip, 300);
+}
+
+function hideTip() {
+  tip.hidden = true;
+  tipShown = null;
+}
+
+tip.addEventListener('mouseenter', () => clearTimeout(tipTimer));
+tip.addEventListener('mouseleave', tipLeave);
+document.addEventListener('keydown', (e) => e.key === 'Escape' && !tip.hidden && hideTip(), true);
+
+function showTip(key, term, x, y, { more = false } = {}) {
+  const entry = glossaryData.glossary.folders[key]?.terms?.[term];
+  if (!entry) return;
+  clearTimeout(tipTimer);
+  tipShown = { key, term };
+  const progress = termProgress(key, term);
+  const full = more || progress === 'new' || progress === 'seen';
+
+  tip.innerHTML = '';
+  const head = el('div', 'tip-head');
+  head.append(el('span', 'tip-term', entry.term), el('span', 'tip-kind', KIND_LABELS[entry.kind] || ''));
+  tip.append(head);
+  tip.append(el('div', 'tip-short', entry.short));
+  if (full) tip.append(el('div', 'tip-body', entry.explanation));
+
+  const seen = glossaryData.codex.folders[key]?.[term]?.seen || 0;
+  const foot = el('div', 'tip-foot');
+  const label = {
+    new: 'New to you',
+    seen: `Looked at ${seen} time${seen === 1 ? '' : 's'}`,
+    familiar: 'Getting familiar',
+    known: 'You know this',
+  }[progress];
+  foot.append(el('span', `tip-progress ${progress}`, label));
+  if (!full) {
+    const moreBtn = el('button', 'link-btn', 'Explain again');
+    moreBtn.addEventListener('click', () => showTip(key, term, x, y, { more: true }));
+    foot.append(moreBtn);
+  }
+  const knowBtn = el('button', 'link-btn', progress === 'known' ? 'Not sure any more' : 'I know this');
+  knowBtn.addEventListener('click', async () => {
+    glossaryData.codex = await api.updateCodex(key, term, { known: progress !== 'known' });
+    showTip(key, term, x, y);
+  });
+  foot.append(knowBtn);
+  tip.append(foot);
+
+  // Keep the tooltip inside the window, below the word, or above it if there is no room.
+  tip.hidden = false;
+  const w = tip.offsetWidth;
+  const h = tip.offsetHeight;
+  tip.style.left = `${Math.max(8, Math.min(x + 12, window.innerWidth - w - 8))}px`;
+  tip.style.top = `${y + 20 + h > window.innerHeight - 8 ? Math.max(8, y - h - 12) : y + 20}px`;
+
+  // Count a look at most once a minute for each term, so moving the mouse about does not count as learning.
+  const id = `${key} ${term}`;
+  if (Date.now() - (lastSeen.get(id) || 0) > 60000) {
+    lastSeen.set(id, Date.now());
+    api.updateCodex(key, term, { seen: true }).then((codex) => (glossaryData.codex = codex));
+  }
+}
+
+api.onGlossaryChanged(loadGlossary);
+
 async function launch(panel, dir, { resumeId = null, title = null, harnessName = null, name = null, firstMessage = null } = {}) {
   if (panel.launching || panel.ptyId !== null) return;
   if (!(await api.folderExists(dir))) {
@@ -878,6 +1042,7 @@ async function launch(panel, dir, { resumeId = null, title = null, harnessName =
       codeMode: Boolean(harness?.codeMode),
       model: harness?.model || settings.defaultModel || '',
       advisor: harness?.advisor || settings.defaultAdvisor || '',
+      explain: Boolean(harness?.explain),
     });
     panel.ptyId = started.id;
     panel.sessionId = started.sessionId;
@@ -885,6 +1050,7 @@ async function launch(panel, dir, { resumeId = null, title = null, harnessName =
     const badge = panel.head.querySelector('.code-badge');
     badge.textContent = panel.codeMode ? 'Code Mode' : '';
     badge.title = panel.codeMode ? 'This session runs in Claude Code\'s experimental Code Mode' : '';
+    if (started.glossaryKey) setUpExplain(panel, started.glossaryKey);
     panel.startedAt = Date.now();
   } catch (err) {
     term.write(`\r\nCould not start the terminal: ${err.message}\r\n`);
@@ -895,7 +1061,7 @@ async function launch(panel, dir, { resumeId = null, title = null, harnessName =
   panel.running = true;
   byPtyId.set(panel.ptyId, panel);
   if (pendingData.has(panel.ptyId)) {
-    term.write(plainOutput(pendingData.get(panel.ptyId)));
+    writeOutput(panel, pendingData.get(panel.ptyId));
     pendingData.delete(panel.ptyId);
   }
 
@@ -924,7 +1090,7 @@ async function launch(panel, dir, { resumeId = null, title = null, harnessName =
 
 api.onData((id, data) => {
   const panel = byPtyId.get(id);
-  if (panel) panel.term.write(plainOutput(data));
+  if (panel) writeOutput(panel, data);
   else pendingData.set(id, (pendingData.get(id) || '') + data);
 });
 
@@ -2546,7 +2712,7 @@ function fillSelect(select, firstLabel, choices, value) {
 function renderHarnessList() {
   harnessList.innerHTML = '';
   const head = el('div', 'harness-row head');
-  for (const t of ['Harness', 'Model', 'Advisor', 'Code Mode', '']) head.append(el('span', null, t));
+  for (const t of ['Harness', 'Model', 'Advisor', 'Code Mode', 'Explain', '']) head.append(el('span', null, t));
   harnessList.append(head);
 
   const select = (firstLabel, choices, value, save) => {
@@ -2572,6 +2738,7 @@ function renderHarnessList() {
     select("Claude Code's", MODEL_CHOICES, settings.defaultModel, (v) => saveSettings({ defaultModel: v })),
     select("Claude Code's", ADVISOR_CHOICES, settings.defaultAdvisor, (v) => saveSettings({ defaultAdvisor: v })),
     el('span'),
+    el('span'),
     el('span')
   );
   harnessList.append(def);
@@ -2588,6 +2755,13 @@ function renderHarnessList() {
     box.addEventListener('change', () => saveHarness(h, { codeMode: box.checked }));
     const code = el('span', 'harness-code');
     code.append(box);
+    const explainBox = el('input');
+    explainBox.type = 'checkbox';
+    explainBox.checked = Boolean(h.explain);
+    explainBox.title = 'Underline the words that structure this work, and explain one when you hold the mouse over it';
+    explainBox.addEventListener('change', () => saveHarness(h, { explain: explainBox.checked }));
+    const explain = el('span', 'harness-code');
+    explain.append(explainBox);
     const remove = el('button', 'icon-x', '×');
     remove.type = 'button';
     remove.title = `Remove /${slug(h.name)}`;
@@ -2601,6 +2775,7 @@ function renderHarnessList() {
       select('Default', MODEL_CHOICES, h.model, (v) => saveHarness(h, { model: v })),
       select('Default', ADVISOR_CHOICES, h.advisor, (v) => saveHarness(h, { advisor: v })),
       code,
+      explain,
       remove
     );
     harnessList.append(row);
@@ -2663,6 +2838,54 @@ function showSettingsPage(name) {
   settingsPage = name;
   settingsNav.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.page === name));
   form.querySelectorAll('.settings-page').forEach((s) => (s.hidden = s.dataset.page !== name));
+  if (name === 'glossary') renderCodex();
+}
+
+// The Glossary page: every term Claude has explained, by folder, and how well you know each one.
+function renderCodex() {
+  const box = document.getElementById('codex-list');
+  box.innerHTML = '';
+  const folders = Object.entries(glossaryData.glossary.folders).filter(([, f]) => Object.keys(f.terms || {}).length);
+  if (!folders.length) {
+    box.append(el('p', 'note', 'No terms yet. Tick Explain on a harness on the Harnesses page, and Claude adds terms as it works there.'));
+    return;
+  }
+  const order = { new: 0, seen: 1, familiar: 2, known: 3 };
+  for (const [key, folder] of folders) {
+    const terms = Object.entries(folder.terms).sort(
+      (a, b) => order[termProgress(key, a[0])] - order[termProgress(key, b[0])] || a[1].term.localeCompare(b[1].term)
+    );
+    const known = terms.filter(([t]) => termProgress(key, t) === 'known').length;
+    const head = el('div', 'codex-folder');
+    head.append(el('span', 'label', tildePath(key)), el('span', 'detail', `${terms.length} terms, ${known} known`));
+    head.title = key;
+    box.append(head);
+    for (const [t, entry] of terms) {
+      const progress = termProgress(key, t);
+      const row = el('div', 'codex-row');
+      const words = el('span', 'codex-words');
+      words.append(el('span', 'codex-term', entry.term), el('span', 'codex-short', entry.short));
+      words.title = entry.explanation;
+      const know = el('button', 'link-btn', progress === 'known' ? 'Not sure' : 'I know this');
+      know.type = 'button';
+      know.addEventListener('click', async () => {
+        glossaryData.codex = await api.updateCodex(key, t, { known: progress !== 'known' });
+        renderCodex();
+      });
+      const remove = el('button', 'icon-x', '×');
+      remove.type = 'button';
+      remove.title = `Remove "${entry.term}" from the glossary`;
+      remove.addEventListener('click', async () => {
+        glossaryData.glossary = await api.removeTerm(key, t);
+        await api.updateCodex(key, t, { forget: true }).then((codex) => (glossaryData.codex = codex));
+        matchers.delete(key);
+        for (const p of panels) if (p.marker && p.glossaryKey === key) p.marker.matcher = matcherFor(key);
+        renderCodex();
+      });
+      row.append(words, el('span', `tip-progress ${progress}`, { new: 'New', seen: 'Seen', familiar: 'Familiar', known: 'Known' }[progress]), know, remove);
+      box.append(row);
+    }
+  }
 }
 settingsNav.addEventListener('click', (e) => {
   const b = e.target.closest('button[data-page]');
@@ -2923,6 +3146,7 @@ function updateTitles() {
   settings = await api.getSettings();
   applyTheme();
   await loadBundledFonts();
+  await loadGlossary();
   restorable = settings.workspace || [];
   updateRestoreHint();
   applyLayout();

@@ -4,6 +4,7 @@
 // - search or read another session's conversation, which costs almost nothing
 // - ask an expert session a question, checking with the user first when that would be costly
 // - open a new terminal in a harness and start a Claude session there with a task
+// - add terms to the folder's glossary, when Explain terms is on for its harness
 // Claude Code talks to it over stdin and stdout, one JSON-RPC message per line.
 const fs = require('fs');
 const os = require('os');
@@ -11,6 +12,7 @@ const path = require('path');
 const { execFile } = require('child_process');
 const { findSessionFile, readTranscript, searchTranscript, formatTranscript } = require('../lib/transcript');
 const { rankExperts } = require('../lib/experts');
+const glossary = require('../lib/glossary');
 
 const REGISTRY = process.env.CLAUDE_PANELS_REGISTRY; // the terminals open in the app
 const CVS = process.env.CLAUDE_PANELS_CVS; // the CVs the app keeps for sessions
@@ -20,6 +22,8 @@ const TOKEN = process.env.CLAUDE_PANELS_TOKEN;
 const CLAUDE = (process.env.CLAUDE_PANELS_CLAUDE || 'claude').split(' ')[0];
 const ADVISOR = process.env.CLAUDE_PANELS_ADVISOR || ''; // the model for ask_advisor, when the app runs the advisor
 const OWN_SESSION = process.env.CLAUDE_PANELS_SESSION || ''; // this terminal's own Claude session id
+const GLOSSARY = process.env.CLAUDE_PANELS_GLOSSARY || ''; // the glossary file, when Explain terms is on
+const GLOSSARY_KEY = process.env.CLAUDE_PANELS_GLOSSARY_KEY || ''; // the folder this session's terms belong to
 const INLINE_LIMIT = 30000; // longer conversations are saved to a file for Claude to read
 const CHEAP_TOKENS = 40000; // a conversation smaller than this is cheap to ask at any time
 const WARM_MINUTES = 60; // a conversation used this recently is likely still in Claude's cache
@@ -233,6 +237,60 @@ const ADVISOR_TOOL = {
   },
 };
 if (ADVISOR) TOOLS.push(ADVISOR_TOOL);
+
+// With Explain terms on for this harness, Claude adds the words that structure the work to a glossary, and
+// the app explains them when the user holds the mouse over one in the terminal.
+const ADD_TERMS_TOOL = {
+  name: 'add_terms',
+  description:
+    'Add terms to the glossary for this folder, so Claude Panels can underline them in your replies and explain ' +
+    'them to the user when they hold the mouse over one. Use it for terms in your replies that the user may not ' +
+    'know. A term that is already in the glossary is kept as it is, unless you set replace because its ' +
+    'explanation is wrong.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      terms: {
+        type: 'array',
+        maxItems: 12,
+        items: {
+          type: 'object',
+          properties: {
+            term: { type: 'string', description: 'The term exactly as you write it in replies, such as "TemplateRenderer" or "migration".' },
+            kind: {
+              type: 'string',
+              enum: glossary.KINDS,
+              description:
+                "part: this work's own name for one of its parts. idea: a concept it relies on. syntax: part of a " +
+                'programming language. process: a way of working.',
+            },
+            short: { type: 'string', description: 'A one-line plain summary, under 15 words.' },
+            explanation: {
+              type: 'string',
+              description: 'Two to four plain sentences on what it is and what it does here in particular.',
+            },
+            aliases: { type: 'array', items: { type: 'string' }, description: 'Optional. Other ways you write it, such as a plural.' },
+          },
+          required: ['term', 'kind', 'short', 'explanation'],
+        },
+      },
+      replace: { type: 'boolean', description: 'Replace the explanation of terms already in the glossary.' },
+    },
+    required: ['terms'],
+  },
+};
+if (GLOSSARY && GLOSSARY_KEY) TOOLS.push(ADD_TERMS_TOOL);
+
+function addTerms(args) {
+  if (!GLOSSARY || !GLOSSARY_KEY) throw new Error('Explain terms is not turned on for this terminal.');
+  const terms = Array.isArray(args.terms) ? args.terms.slice(0, 12) : [];
+  const r = glossary.addTerms(GLOSSARY, GLOSSARY_KEY, terms, { replace: Boolean(args.replace) });
+  const parts = [];
+  if (r.added.length) parts.push(`Added: ${r.added.join(', ')}.`);
+  if (r.kept.length) parts.push(`Already in the glossary, so kept as they were: ${r.kept.join(', ')}.`);
+  if (r.skipped.length) parts.push(`Skipped, because a term, summary or explanation was missing: ${r.skipped.join(', ')}.`);
+  return parts.join(' ') || 'No terms were given.';
+}
 
 const readJson = (file, fallback) => {
   try {
@@ -502,6 +560,7 @@ async function callTool(name, args) {
   if (name === 'open_terminal') return openTerminal(args);
   if (name === 'wait_for_report') return waitForReport(args);
   if (name === 'ask_advisor') return askAdvisor(args);
+  if (name === 'add_terms') return addTerms(args);
   if (name === 'report_back') {
     const r = await askApp('/report', { from: SELF, report: args.report });
     return `Your report has been handed to terminal ${r.to} (${r.toName}). Now tell the user here what you did.`;

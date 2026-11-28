@@ -7,6 +7,7 @@ const crypto = require('crypto');
 const { execFile, spawn } = require('child_process');
 const http = require('http');
 const { describeTool, resultText } = require('./lib/transcript');
+const glossary = require('./lib/glossary');
 
 // A separate settings folder can be set for testing, so a test copy never touches the installed app's settings.
 if (process.env.CLAUDE_PANELS_PROFILE) app.setPath('userData', process.env.CLAUDE_PANELS_PROFILE);
@@ -111,6 +112,8 @@ function cleanEnv() {
 // conversations. Inside the packaged app the server's files sit outside the app archive.
 const registryFile = () => path.join(app.getPath('userData'), 'panels.json');
 const cvsFile = () => path.join(app.getPath('userData'), 'cvs.json');
+const glossaryFile = () => path.join(app.getPath('userData'), 'glossary.json');
+const codexFile = () => path.join(app.getPath('userData'), 'codex.json');
 const mcpScript = path.join(__dirname, 'mcp', 'panels-mcp.js').replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`);
 const statusScript = path.join(__dirname, 'mcp', 'status-line.js').replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`);
 const gateScript = path.join(__dirname, 'mcp', 'gate-hook.js').replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`);
@@ -219,6 +222,28 @@ const SIMPLE_PROMPT =
   'you ask the person to approve something, explain in plain words what it will do. When you finish, say ' +
   'plainly what changed and where to find it.';
 
+// With the Explain box ticked on a harness, Claude adds the words that structure the work to a glossary,
+// and the app underlines them in the terminal and explains them when the mouse is held over one.
+function explainPrompt(known) {
+  let text =
+    'The person using this session is not a software engineer, and they want to understand and learn how this ' +
+    'work is done while you do it. Claude Panels underlines the words that are in this folder\'s glossary, and ' +
+    'shows the person an explanation when they hold the mouse over one.\n\n' +
+    'When your reply to the person uses a term they may not know and it is not in the glossary yet, add it with ' +
+    'the panels add_terms tool before you finish that reply. Good terms are the ones that structure this work: ' +
+    "this work's own names for its parts (in a codebase: its files, modules, services, data and settings; in " +
+    'other work: the organisations, teams, people, products and systems it deals with), the ideas it relies on ' +
+    "(such as a function, an API, a migration or a test), parts of a programming language's syntax, and ways " +
+    'of working (such as a branch or a pull request). Skip everyday words and terms you only used in tool calls.\n\n' +
+    'For each term give the term exactly as you write it in replies, a one-line summary, and an explanation of ' +
+    'two to four plain sentences about what it is and what it does here in particular. Compare it ' +
+    'to something from everyday work when that helps. Add several terms in one call, at most once per reply. ' +
+    'Keep using the same words for the same things, so the person meets the terms they have learned again. You ' +
+    'do not need to explain glossary terms in your reply as well.';
+  if (known.length) text += `\n\nAlready in the glossary: ${known.slice(0, 300).join(', ')}.`;
+  return text;
+}
+
 // When to call the app's advisor, following Anthropic's guidance for its advisor tool.
 function advisorPrompt(model) {
   return (
@@ -232,7 +257,7 @@ function advisorPrompt(model) {
   );
 }
 
-function startTerminal({ cwd, cols, rows, resumeId, name, number, firstMessage, codeMode, model, advisor }) {
+function startTerminal({ cwd, cols, rows, resumeId, name, number, firstMessage, codeMode, model, advisor, explain }) {
   // New sessions get an id chosen here, so the app knows which saved session each panel is running.
   const sessionId = resumeId || crypto.randomUUID();
   if (!fs.existsSync(cwd)) throw new Error(`Folder not found: ${cwd}`);
@@ -246,7 +271,14 @@ function startTerminal({ cwd, cols, rows, resumeId, name, number, firstMessage, 
   if (!/^[^\n\r"]{1,80}$/.test(name || '')) throw new Error('Not a valid session name');
   const filePrompt = settings.fileMode === 'off' ? '' : settings.prompts[settings.fileMode] || '';
   const appAdvisor = advisor?.startsWith('app:') ? advisor.slice(4) : '';
-  const prompt = [panelsPrompt(number, name), filePrompt, appAdvisor && advisorPrompt(appAdvisor), settings.simple?.plainReplies && SIMPLE_PROMPT]
+  const glossaryKey = explain ? glossary.glossaryKey(cwd) : null;
+  const prompt = [
+    panelsPrompt(number, name),
+    filePrompt,
+    appAdvisor && advisorPrompt(appAdvisor),
+    settings.simple?.plainReplies && SIMPLE_PROMPT,
+    glossaryKey && explainPrompt(glossary.termNames(glossaryFile(), glossaryKey)),
+  ]
     .filter(Boolean)
     .join('\n\n');
 
@@ -264,6 +296,7 @@ function startTerminal({ cwd, cols, rows, resumeId, name, number, firstMessage, 
           CLAUDE_PANELS_CLAUDE: settings.claudeCommand || 'claude',
           CLAUDE_PANELS_SESSION: sessionId,
           ...(appAdvisor ? { CLAUDE_PANELS_ADVISOR: appAdvisor } : {}),
+          ...(glossaryKey ? { CLAUDE_PANELS_GLOSSARY: glossaryFile(), CLAUDE_PANELS_GLOSSARY_KEY: glossaryKey } : {}),
           ...(control ? { CLAUDE_PANELS_CONTROL: control.url, CLAUDE_PANELS_TOKEN: control.token } : {}),
         },
       },
@@ -331,10 +364,55 @@ function startTerminal({ cwd, cols, rows, resumeId, name, number, firstMessage, 
   });
 
   rememberRecent(cwd);
-  return { id, sessionId, codeMode: useCodeMode };
+  return { id, sessionId, codeMode: useCodeMode, glossaryKey };
 }
 
 ipcMain.handle('pty:start', (_e, opts) => startTerminal(opts));
+
+// ---------- Explain terms ----------
+
+// What the user has learned: for each folder and term, how often they have looked at its explanation
+// and whether they have said they know it. Only the app writes this file.
+function loadCodex() {
+  const c = glossary.readJson(codexFile(), {});
+  return { folders: c.folders && typeof c.folders === 'object' ? c.folders : {} };
+}
+
+ipcMain.handle('glossary:get', () => ({ glossary: glossary.loadGlossary(glossaryFile()), codex: loadCodex() }));
+
+// change: { seen: true } after a hover, { known: true | false }, or { forget: true } to start again.
+ipcMain.handle('codex:update', (_e, key, term, change) => {
+  const codex = loadCodex();
+  const folder = (codex.folders[key] = codex.folders[key] || {});
+  const entry = (folder[term] = folder[term] || { seen: 0 });
+  if (change?.seen) {
+    entry.seen = (entry.seen || 0) + 1;
+    entry.firstSeen = entry.firstSeen || Date.now();
+    entry.lastSeen = Date.now();
+  }
+  if (change?.known === true) entry.known = Date.now();
+  if (change?.known === false) delete entry.known;
+  if (change?.forget) delete folder[term];
+  glossary.writeJson(codexFile(), codex);
+  return codex;
+});
+
+// Removes a term from a folder's glossary, for a term that is wrong or not worth explaining.
+ipcMain.handle('glossary:remove', (_e, key, term) => {
+  const g = glossary.loadGlossary(glossaryFile());
+  if (g.folders[key]?.terms?.[term]) {
+    delete g.folders[key].terms[term];
+    glossary.writeJson(glossaryFile(), g);
+  }
+  return g;
+});
+
+// The tool server adds terms while Claude works, so tell the window when the glossary changes.
+function watchGlossary() {
+  fs.watchFile(glossaryFile(), { interval: 1000 }, (now, before) => {
+    if (now.mtimeMs !== before.mtimeMs && win && !win.isDestroyed()) win.webContents.send('glossary:changed');
+  });
+}
 
 // ---------- Terminals that Claude opens ----------
 
@@ -1182,6 +1260,7 @@ app.whenReady().then(() => {
   settings = loadSettings();
   writeRegistry([]); // nothing is open yet
   startControlServer();
+  watchGlossary();
   buildMenu();
   createWindow();
   // Look for updates shortly after starting, then every six hours.
