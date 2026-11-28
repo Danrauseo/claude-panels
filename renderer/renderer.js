@@ -828,12 +828,14 @@ function termProgress(key, term) {
 }
 
 // The underline for a term: a dotted line in the accent colour that fades as the term is learned.
+// A quiet dotted underline in the terminal's own text greys, so it reads as a hint rather than a
+// mistake. It dims as the term becomes familiar and goes once it is known.
 function underlineFor(key, term) {
   const blue = settings.theme === 'blue';
   const colour = {
-    new: blue ? '127;157;255' : '217;119;87',
-    seen: blue ? '96;112;160' : '150;96;78',
-    familiar: blue ? '74;80;96' : '100;90;84',
+    new: blue ? '128;136;156' : '138;133;127',
+    seen: blue ? '92;99;116' : '102;98;94',
+    familiar: blue ? '64;70;84' : '72;70;67',
   }[termProgress(key, term)];
   return colour ? `\x1b[4:4m\x1b[58;2;${colour}m` : '';
 }
