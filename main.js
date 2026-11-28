@@ -6,8 +6,9 @@ const pty = require('node-pty');
 const crypto = require('crypto');
 const { execFile, spawn } = require('child_process');
 const http = require('http');
-const { describeTool, resultText } = require('./lib/transcript');
+const { describeTool, resultText, findSessionFile } = require('./lib/transcript');
 const glossary = require('./lib/glossary');
+const { friendlyItemsFromLines } = require('./lib/friendly');
 
 // A separate settings folder can be set for testing, so a test copy never touches the installed app's settings.
 if (process.env.CLAUDE_PANELS_PROFILE) app.setPath('userData', process.env.CLAUDE_PANELS_PROFILE);
@@ -368,6 +369,54 @@ function startTerminal({ cwd, cols, rows, resumeId, name, number, firstMessage, 
 }
 
 ipcMain.handle('pty:start', (_e, opts) => startTerminal(opts));
+
+// ---------- Friendly view ----------
+
+// The friendly view shows a session as a readable conversation, built from the file Claude Code saves it
+// in. Only the new end of the file is read when it changes, and only the parts the view needs are sent
+// to the window: what the user asked, what Claude said, each tool Claude used and whether it finished.
+const friendlyWatches = new Map(); // session id -> { file, offset, rest, timer }
+
+function readFriendly(sessionId) {
+  const w = friendlyWatches.get(sessionId);
+  if (!w) return;
+  if (!w.file) w.file = findSessionFile(sessionId);
+  if (!w.file || !fs.existsSync(w.file)) return;
+  const size = fs.statSync(w.file).size;
+  if (size < w.offset) Object.assign(w, { offset: 0, rest: '' }); // the file was replaced, so start again
+  if (size === w.offset) return;
+  const fd = fs.openSync(w.file, 'r');
+  let text;
+  try {
+    const buf = Buffer.alloc(size - w.offset);
+    fs.readSync(fd, buf, 0, buf.length, w.offset);
+    text = w.rest + buf.toString('utf8');
+  } finally {
+    fs.closeSync(fd);
+  }
+  w.offset = size;
+  const lines = text.split('\n');
+  w.rest = lines.pop(); // a line still being written
+  const items = friendlyItemsFromLines(lines);
+  if (items.length && win && !win.isDestroyed()) win.webContents.send('friendly:items', sessionId, items, w.first);
+  w.first = false;
+}
+
+// The window asks for a session's conversation when a friendly view opens, and stops when it closes.
+// The file is checked twice a second, which costs almost nothing when it has not changed.
+ipcMain.handle('friendly:watch', (_e, sessionId) => {
+  if (!/^[\w-]+$/.test(sessionId || '')) return false;
+  clearInterval(friendlyWatches.get(sessionId)?.timer);
+  const w = { file: null, offset: 0, rest: '', first: true };
+  friendlyWatches.set(sessionId, w);
+  readFriendly(sessionId);
+  w.timer = setInterval(() => readFriendly(sessionId), 500);
+  return true;
+});
+ipcMain.handle('friendly:unwatch', (_e, sessionId) => {
+  clearInterval(friendlyWatches.get(sessionId)?.timer);
+  friendlyWatches.delete(sessionId);
+});
 
 // ---------- Explain terms ----------
 
@@ -1177,6 +1226,7 @@ function buildMenu() {
         { label: 'Show Background Sessions', accelerator: 'CmdOrCtrl+J', click: () => send('menu:sidebar') },
         { label: 'Move Panel to the Background or Back', accelerator: 'CmdOrCtrl+B', click: () => send('menu:to-background') },
         { label: 'Move Odd Panel to Bottom or Side', accelerator: 'CmdOrCtrl+L', click: () => send('menu:layout') },
+        { label: 'Switch Between Friendly View and Terminal', accelerator: 'CmdOrCtrl+E', click: () => send('menu:friendly') },
         { label: 'Settings', accelerator: 'CmdOrCtrl+,', click: () => send('menu:settings') },
       ],
     },

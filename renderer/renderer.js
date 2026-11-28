@@ -382,7 +382,8 @@ async function toggleOddLayout() {
 function setFocus(panel) {
   focused = panel;
   panels.forEach((p) => p.el.classList.toggle('focused', p === panel));
-  if (panel?.term) panel.term.focus();
+  if (panel?.friendly && panel.fv) panel.fv.input.focus();
+  else if (panel?.term) panel.term.focus();
   else if (panel?.picker) panel.picker.input.focus();
 }
 
@@ -501,6 +502,7 @@ function closePanel(panel, { confirmed = false } = {}) {
     api.kill(panel.ptyId);
     byPtyId.delete(panel.ptyId);
   }
+  if (panel.fvSession) api.unwatchFriendly(panel.fvSession);
   if (peeked === panel) hidePeek(false);
   panel.term?.dispose();
   panel.resizeObserver?.disconnect();
@@ -796,6 +798,310 @@ function registerFileLinks(term) {
   });
 }
 
+// ---------- Friendly view ----------
+
+// A plainer way to look at a session, for people who find the terminal daunting. It shows the same live
+// session as a readable conversation, built from the file Claude Code saves it in: what you asked, what
+// Claude said, and one plain line for each thing Claude did, such as "Reading a file" or "Running a
+// command". The terminal keeps running underneath, out of sight, so ⌘E always shows it again, and
+// approvals and questions still come from it as cards. It is turned on for each harness in Settings.
+
+const baseOf = (p) => String(p || '').split('/').filter(Boolean).pop() || '';
+const humanise = (name) =>
+  String(name || '')
+    .replace(/[_-]+/g, ' ')
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .trim()
+    .toLowerCase();
+
+// One plain line for a tool call: what Claude is doing now, a short detail, and how to count it once done.
+function friendlyStep(name, input = {}) {
+  const host = () => {
+    try {
+      return new URL(input.url).hostname;
+    } catch {
+      return '';
+    }
+  };
+  if (name === 'Read') return { now: 'Reading a file', detail: baseOf(input.file_path), count: ['read', 'file', 'files'] };
+  if (name === 'Edit' || name === 'MultiEdit') return { now: 'Changing a file', detail: baseOf(input.file_path), count: ['changed', 'file', 'files'] };
+  if (name === 'Write') return { now: 'Writing a file', detail: baseOf(input.file_path), count: ['wrote', 'file', 'files'] };
+  if (name === 'NotebookEdit') return { now: 'Changing a notebook', detail: baseOf(input.file_path), count: ['changed', 'notebook', 'notebooks'] };
+  if (name === 'Bash') return { now: 'Running a command', detail: input.description || input.command, count: ['ran', 'command', 'commands'] };
+  if (name === 'Grep') return { now: 'Searching the files', detail: input.pattern ? `for "${input.pattern}"` : '', count: ['searched'] };
+  if (name === 'Glob') return { now: 'Looking for files', detail: input.pattern, count: ['searched'] };
+  if (name === 'WebFetch') return { now: 'Reading a web page', detail: host(), count: ['read', 'web page', 'web pages'] };
+  if (name === 'WebSearch') return { now: 'Searching the web', detail: input.query, count: ['searched the web'] };
+  if (name === 'Task' || name === 'Agent') return { now: 'Asking a helper', detail: input.description, count: ['asked', 'helper', 'helpers'] };
+  if (name === 'TodoWrite') {
+    const todos = input.todos || [];
+    const done = todos.filter((t) => t.status === 'completed').length;
+    return { now: 'Updating its plan', detail: todos.length ? `${done} of ${todos.length} steps done` : '', count: ['updated its plan'] };
+  }
+  if (name === 'AskUserQuestion') return { now: 'Asking you a question', detail: input.question, count: ['asked you a question'] };
+  if (name === 'Skill') return { now: 'Using a skill', detail: input.skill, count: ['used a skill'] };
+  if (name === 'ToolSearch') return { now: 'Getting a tool ready', detail: '', count: null };
+  const mcp = /^mcp__(.+?)__(.+)$/.exec(name);
+  if (mcp) {
+    if (mcp[1] === 'panels') return { now: 'Working with your other terminals', detail: humanise(mcp[2]), count: ['worked with your other terminals'] };
+    const service = mcp[1].replace(/_/g, ' ');
+    return { now: `Using ${service}`, detail: humanise(mcp[2]), count: [`used ${service}`] };
+  }
+  return { now: `Using ${humanise(name)}`, detail: '', count: [`used ${humanise(name)}`] };
+}
+
+// "Read 3 files, changed 1 file and ran 2 commands", from the steps in a finished group.
+function friendlySummary(steps) {
+  const tally = new Map();
+  for (const s of steps) {
+    if (!s.count) continue;
+    const key = s.count.join('|');
+    tally.set(key, { count: s.count, n: (tally.get(key)?.n || 0) + 1 });
+  }
+  const parts = [...tally.values()].map(({ count: [verb, one, many], n }) => {
+    if (!one) return n > 1 && verb === 'searched' ? `searched ${n} times` : verb;
+    return n === 1 ? `${verb} a ${one}` : `${verb} ${n} ${many}`;
+  });
+  if (!parts.length) return 'Got ready';
+  const text = parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)}` : parts[0];
+  return text[0].toUpperCase() + text.slice(1);
+}
+
+// A small part of Markdown, enough for Claude's replies: paragraphs, headings, lists, bold, inline code,
+// code blocks and tables. Everything is escaped first, so nothing in a reply can run as code.
+function friendlyMarkdown(text) {
+  const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const inline = (s) =>
+    esc(s)
+      .replace(/`([^`]+)`/g, '<code>$1</code>')
+      .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
+      .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, '<a data-href="$2">$1</a>');
+  const out = [];
+  const lines = text.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (/^```/.test(line)) {
+      const code = [];
+      while (++i < lines.length && !/^```/.test(lines[i])) code.push(lines[i]);
+      out.push(`<pre>${esc(code.join('\n'))}</pre>`);
+    } else if (/^\s*\|/.test(line)) {
+      const rows = [line];
+      while (i + 1 < lines.length && /^\s*\|/.test(lines[i + 1])) rows.push(lines[++i]);
+      out.push(`<pre>${esc(rows.join('\n'))}</pre>`);
+    } else if (/^#{1,6}\s/.test(line)) {
+      out.push(`<div class="fv-h">${inline(line.replace(/^#+\s*/, ''))}</div>`);
+    } else if (/^\s*([-*•]|\d+\.)\s+/.test(line)) {
+      const items = [line];
+      while (i + 1 < lines.length && /^\s*([-*•]|\d+\.)\s+/.test(lines[i + 1])) items.push(lines[++i]);
+      const tag = /^\s*\d+\./.test(line) ? 'ol' : 'ul';
+      out.push(`<${tag}>${items.map((it) => `<li>${inline(it.replace(/^\s*([-*•]|\d+\.)\s+/, ''))}</li>`).join('')}</${tag}>`);
+    } else if (line.trim()) {
+      const para = [line];
+      while (i + 1 < lines.length && lines[i + 1].trim() && !/^(```|#{1,6}\s|\s*([-*•|]|\d+\.)\s)/.test(lines[i + 1])) para.push(lines[++i]);
+      out.push(`<p>${inline(para.join(' '))}</p>`);
+    }
+  }
+  return out.join('');
+}
+
+// Underlines glossary terms in a reply when Explain terms is on, using the same tooltips as the terminal.
+function friendlyTerms(panel, root) {
+  const key = panel.glossaryKey;
+  const matcher = key && matcherFor(key);
+  if (!matcher) return;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode: (n) => (n.parentElement.closest('pre, code, .fv-term') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT),
+  });
+  const nodes = [];
+  while (walker.nextNode()) nodes.push(walker.currentNode);
+  for (const node of nodes) {
+    const found = Explain.findTerms(node.textContent, matcher);
+    if (!found.length) continue;
+    const frag = document.createDocumentFragment();
+    let at = 0;
+    for (const f of found) {
+      frag.append(node.textContent.slice(at, f.start));
+      const span = el('span', `fv-term ${termProgress(key, f.key)}`, f.text);
+      span.addEventListener('mouseenter', (e) => tipHover(key, f.key, e));
+      span.addEventListener('mouseleave', () => tipLeave());
+      frag.append(span);
+      at = f.end;
+    }
+    frag.append(node.textContent.slice(at));
+    node.replaceWith(frag);
+  }
+}
+
+function buildFriendly(panel) {
+  const view = el('div', 'friendly');
+  const log = el('div', 'fv-log');
+  const working = el('div', 'fv-working');
+  working.append(el('span', 'fv-pulse', 'Working'));
+  working.hidden = true;
+  const compose = el('div', 'fv-compose');
+  const input = el('textarea');
+  input.rows = 1;
+  input.placeholder = 'Tell Claude what you need';
+  const send = el('button', 'btn primary', 'Send');
+  send.type = 'button';
+  const stop = el('button', 'btn', 'Stop');
+  stop.type = 'button';
+  stop.title = 'Stop Claude, the same as pressing Esc in the terminal';
+  stop.hidden = true;
+  const toTerminal = el('button', 'link-btn', 'Show the terminal ⌘E');
+  toTerminal.type = 'button';
+  compose.append(input, stop, send);
+  const foot = el('div', 'fv-foot');
+  foot.append(toTerminal);
+  view.append(log, working, compose, foot);
+
+  const submit = () => {
+    const text = input.value.replace(/\s+$/, '');
+    if (!text || !panel.running) return;
+    // A message with several lines goes in as a paste, so its new lines do not send it early. Return is
+    // sent a moment later, so Claude Code takes it as pressing Return rather than part of the text.
+    api.write(panel.ptyId, text.includes('\n') ? `\x1b[200~${text}\x1b[201~` : text);
+    setTimeout(() => api.write(panel.ptyId, '\r'), 80);
+    input.value = '';
+    input.style.height = '';
+    panel.fv.stick = true;
+  };
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+      e.preventDefault();
+      submit();
+    } else if (e.key === 'Escape' && panel.lightState === 'working') {
+      api.write(panel.ptyId, '\x1b');
+    }
+  });
+  input.addEventListener('input', () => {
+    input.style.height = '';
+    input.style.height = `${Math.min(input.scrollHeight, 160)}px`;
+  });
+  send.addEventListener('click', submit);
+  stop.addEventListener('click', () => api.write(panel.ptyId, '\x1b'));
+  toTerminal.addEventListener('click', () => setFriendly(panel, false));
+  log.addEventListener('click', (e) => {
+    const a = e.target.closest('a[data-href]');
+    if (a) return openLinkTarget(a.dataset.href);
+    const head = e.target.closest('.fv-activity-head');
+    if (head) head.parentElement.classList.toggle('open');
+  });
+  // Follow new messages, unless you have scrolled up to read something earlier.
+  log.addEventListener('scroll', () => {
+    panel.fv.stick = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
+  });
+
+  panel.fv = { view, log, working, input, stop, steps: new Map(), group: null, stick: true };
+  panel.body.append(view);
+}
+
+function friendlyGroupHead(group) {
+  const running = group.steps.filter((s) => !s.done);
+  group.head.innerHTML = '';
+  if (running.length) {
+    const s = running.at(-1);
+    group.head.append(el('span', 'fv-pulse', s.now));
+    if (s.detail) group.head.append(el('span', 'fv-detail', s.detail));
+  } else {
+    group.head.append(el('span', 'fv-chevron', '›'), el('span', null, friendlySummary(group.steps)));
+    if (group.steps.some((s) => s.error)) group.head.append(el('span', 'fv-detail', 'one step did not work, so Claude tried another way'));
+  }
+}
+
+function addFriendlyItems(panel, items) {
+  const fv = panel.fv;
+  for (const item of items) {
+    if (item.kind === 'user' || item.kind === 'text') {
+      fv.group = null;
+      const node = el('div', item.kind === 'user' ? 'fv-user' : 'fv-text');
+      if (item.kind === 'user') node.textContent = item.text;
+      else {
+        node.innerHTML = friendlyMarkdown(item.text);
+        friendlyTerms(panel, node);
+      }
+      fv.log.append(node);
+    } else if (item.kind === 'tool') {
+      if (!fv.group) {
+        const box = el('div', 'fv-activity');
+        fv.group = { box, head: el('div', 'fv-activity-head'), list: el('div', 'fv-steps'), steps: [] };
+        box.append(fv.group.head, fv.group.list);
+        fv.log.append(box);
+      }
+      const step = { ...friendlyStep(item.name, item.input), done: false, group: fv.group };
+      const row = el('div', 'fv-step');
+      row.append(el('span', null, step.now));
+      if (step.detail) row.append(el('span', 'fv-detail', step.detail));
+      row.title = item.input.command || item.input.file_path || item.input.url || '';
+      fv.group.list.append(row);
+      fv.group.steps.push(step);
+      fv.steps.set(item.id, step);
+      friendlyGroupHead(fv.group);
+    } else if (item.kind === 'result') {
+      const step = fv.steps.get(item.id);
+      if (!step) continue;
+      step.done = true;
+      step.error = item.error;
+      fv.steps.delete(item.id);
+      friendlyGroupHead(step.group);
+    }
+  }
+  // Keep only the latest part of a very long conversation on the page.
+  while (fv.log.childElementCount > 600) fv.log.firstElementChild.remove();
+  drawFriendlyWorking(panel);
+  if (fv.stick) fv.log.scrollTop = fv.log.scrollHeight;
+}
+
+// "Working" shows while Claude is busy and no step is running, for example while it writes a reply.
+function drawFriendlyWorking(panel) {
+  if (!panel.fv) return;
+  const busy = panel.running && panel.lightState === 'working';
+  const stepRunning = [...panel.fv.steps.values()].length > 0;
+  panel.fv.working.hidden = !busy || stepRunning;
+  panel.fv.stop.hidden = !busy;
+}
+
+function setFriendly(panel, on) {
+  if (!panel?.term || Boolean(panel.friendly) === on) return;
+  panel.friendly = on;
+  const host = panel.body.querySelector('.term-host');
+  if (on) {
+    if (!panel.fv) buildFriendly(panel);
+    panel.fv.view.hidden = false;
+    // Hidden, the terminal stops drawing but keeps reading Claude Code's output, so approvals still work.
+    host.style.display = 'none';
+    watchFriendly(panel);
+    if (focused === panel) panel.fv.input.focus();
+  } else {
+    if (panel.fv) panel.fv.view.hidden = true;
+    host.style.display = '';
+    if (panel.fvSession) api.unwatchFriendly(panel.fvSession);
+    panel.fvSession = null;
+    panel.fit.fit();
+    if (focused === panel) panel.term.focus();
+  }
+  panel.el.classList.toggle('friendly-on', on);
+  scanApprovals();
+}
+
+function watchFriendly(panel) {
+  if (!panel.friendly || !panel.sessionId || panel.fvSession === panel.sessionId) return;
+  if (panel.fvSession) api.unwatchFriendly(panel.fvSession);
+  panel.fvSession = panel.sessionId;
+  api.watchFriendly(panel.sessionId);
+}
+
+api.onFriendlyItems((sessionId, items, first) => {
+  const panel = panels.find((p) => p.fvSession === sessionId);
+  if (!panel?.fv) return;
+  if (first) {
+    panel.fv.log.innerHTML = '';
+    panel.fv.steps.clear();
+    panel.fv.group = null;
+  }
+  addFriendlyItems(panel, items);
+});
+
 // ---------- Explain terms ----------
 
 // With the Explain box ticked on a harness, Claude adds the words that structure the work to a glossary
@@ -1042,6 +1348,7 @@ async function launch(panel, dir, { resumeId = null, title = null, harnessName =
       advisor: harness?.advisor || settings.defaultAdvisor || '',
       explain: Boolean(harness?.explain),
     });
+    panel.friendlyAtStart = Boolean(harness?.friendly);
     panel.ptyId = started.id;
     panel.sessionId = started.sessionId;
     panel.codeMode = Boolean(started.codeMode);
@@ -1078,6 +1385,7 @@ async function launch(panel, dir, { resumeId = null, title = null, harnessName =
   // If a harness filter is on and this terminal is in a different harness, show everything again.
   if (filterKey && groupOf(panel).key !== filterKey) filterKey = null;
   applyLayout();
+  if (panel.friendlyAtStart) setFriendly(panel, true);
 
   // This folder is now a recent one, so refresh the lists in any other new panels.
   settings = { ...settings, ...(await api.getSettings()) };
@@ -1992,6 +2300,7 @@ function followNewSessions() {
       .sort((a, b) => b.updated - a.updated)[0];
     if (current && current.id !== p.sessionId) {
       p.sessionId = current.id;
+      watchFriendly(p);
       saveWorkspace();
     }
   }
@@ -2267,6 +2576,7 @@ function drawOwnLight(panel, act) {
   const state = !panel.cwd ? '' : !panel.running ? 'off' : act.pending || act.working ? 'working' : 'idle';
   light.className = `own-light ${state}`;
   panel.lightState = state;
+  drawFriendlyWorking(panel);
   light.title = { working: 'Claude is working', idle: 'Claude is waiting for you', off: 'This session has ended', '': '' }[state];
 }
 
@@ -2583,7 +2893,8 @@ function scanApprovals() {
     const asking = readApproval(p);
     p.needsApproval = Boolean(asking);
     const onScreen = visiblePanels().includes(p) || p === peeked;
-    const req = p === focused && onScreen ? null : asking;
+    // In the friendly view the terminal is hidden, so its own questions show as a card too.
+    const req = p === focused && onScreen && !p.friendly ? null : asking;
     const shown = approvalCards.get(p);
     if (!req) {
       if (shown) {
@@ -2595,7 +2906,7 @@ function scanApprovals() {
     if (shown?.key === req.key && shown.card.isConnected && shown.host === focused) continue;
     shown?.card.remove();
     const card = buildApprovalCard(p, req);
-    const host = focused && focused !== p ? focused.body : document.body;
+    const host = focused && (focused !== p || p.friendly) ? focused.body : document.body;
     host.append(card);
     approvalCards.set(p, { key: req.key, card, host: focused });
   }
@@ -2615,7 +2926,10 @@ function buildApprovalCard(p, req) {
   pill.style.setProperty('--hue', harnessColour(p.harnessName || baseName(p.cwd)));
   head.append(el('span', 'num', String(p.number)), pill, el('span', null, req.options.length > 0 && /^Do you want/i.test(req.question) ? 'needs your approval' : 'is asking you'));
   const go = el('button', 'link-btn', 'Go to it');
-  go.addEventListener('click', () => showPanel(p));
+  go.addEventListener('click', () => {
+    showPanel(p);
+    setFriendly(p, false);
+  });
   head.append(go);
   card.append(head);
   for (const d of req.details) card.append(el('div', 'approval-detail', d));
@@ -2637,8 +2951,10 @@ function buildApprovalCard(p, req) {
       api.write(p.ptyId, o.n); // the same as pressing that number in that terminal
       card.remove();
       approvalCards.delete(p);
-      if (needsTyping) showPanel(p);
-      else setFocus(focused);
+      if (needsTyping) {
+        showPanel(p);
+        setFriendly(p, false);
+      } else setFocus(focused);
     });
     choices.append(b);
   }
@@ -2710,7 +3026,7 @@ function fillSelect(select, firstLabel, choices, value) {
 function renderHarnessList() {
   harnessList.innerHTML = '';
   const head = el('div', 'harness-row head');
-  for (const t of ['Harness', 'Model', 'Advisor', 'Code Mode', 'Explain', '']) head.append(el('span', null, t));
+  for (const t of ['Harness', 'Model', 'Advisor', 'Code Mode', 'Explain', 'Friendly', '']) head.append(el('span', null, t));
   harnessList.append(head);
 
   const select = (firstLabel, choices, value, save) => {
@@ -2737,6 +3053,7 @@ function renderHarnessList() {
     select("Claude Code's", ADVISOR_CHOICES, settings.defaultAdvisor, (v) => saveSettings({ defaultAdvisor: v })),
     el('span'),
     el('span'),
+    el('span'),
     el('span')
   );
   harnessList.append(def);
@@ -2760,6 +3077,13 @@ function renderHarnessList() {
     explainBox.addEventListener('change', () => saveHarness(h, { explain: explainBox.checked }));
     const explain = el('span', 'harness-code');
     explain.append(explainBox);
+    const friendlyBox = el('input');
+    friendlyBox.type = 'checkbox';
+    friendlyBox.checked = Boolean(h.friendly);
+    friendlyBox.title = 'Open sessions here in the friendly view, a plainer view of the conversation. ⌘E shows the terminal';
+    friendlyBox.addEventListener('change', () => saveHarness(h, { friendly: friendlyBox.checked }));
+    const friendly = el('span', 'harness-code');
+    friendly.append(friendlyBox);
     const remove = el('button', 'icon-x', '×');
     remove.type = 'button';
     remove.title = `Remove /${slug(h.name)}`;
@@ -2774,6 +3098,7 @@ function renderHarnessList() {
       select('Default', ADVISOR_CHOICES, h.advisor, (v) => saveHarness(h, { advisor: v })),
       code,
       explain,
+      friendly,
       remove
     );
     harnessList.append(row);
@@ -3041,6 +3366,7 @@ api.onMenu('to-background', () => focused && toggleBackground(focused));
 api.onMenu('stack', toggleStack);
 api.onMenu('restore', restoreWorkspace);
 api.onMenu('settings', openSettings);
+api.onMenu('friendly', () => focused?.term && setFriendly(focused, !focused.friendly));
 
 // ⌘1 to ⌘9 jump to that terminal, showing it if a filter hides it. In the stack view they open a harness.
 window.addEventListener('keydown', (e) => {

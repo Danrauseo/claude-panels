@@ -74,6 +74,7 @@ Add `--notes notes.md` to use your own release notes.
 | ⌘W | Close the selected terminal |
 | ⌘1 to ⌘9 | Jump to a terminal, or in the stack view open a harness. For a background session, this shows it in the drawer |
 | ⌘L | Put the last panel at the bottom or on the side when an odd number are open |
+| ⌘E | Switch the selected terminal between the friendly view and the terminal |
 | @ | At the start of a word in Claude, list your other terminals to mention |
 | ⌘, | Settings |
 | ⌘/ | A window listing every shortcut. ⌘? works too |
@@ -223,6 +224,18 @@ A session that has worked on something for a while knows a lot about it. The app
 - **Suggested experts.** After your first message in a new terminal, the app checks the CVs itself. If a past session in the same folder clearly matches what you asked, a small "Expert:" label appears in the top bar. Click it to tell Claude to use that session, or click × to dismiss it.
 
 ⌘K shows each session's CV summary and searches the CVs, and the stack view shows a session's CV when you hover over it. Turn CVs off in Settings.
+
+## Friendly view
+
+Each harness row on the Harnesses page of Settings has a **Friendly** box. Sessions in a harness with it ticked open in the friendly view, a plainer way to see the same live session for people who find the terminal daunting. It is off unless you tick it, and ⌘E switches any terminal between the friendly view and the terminal.
+
+- **The conversation.** Your messages and Claude's replies are shown as ordinary text in the app's own fonts, with headings, lists and code laid out.
+- **What Claude is doing.** Each tool Claude uses becomes one plain line, such as "Reading a file", "Searching the files", "Running a command" or "Using Gmail", with a short detail beside it, such as the file's name or Claude's own description of the command. The step that is running pulses. Finished steps fold into one line, such as "Read 3 files and ran a command". Click it to see each step.
+- **Typing.** Type in the box at the bottom and press Return to send, or Shift+Return for a new line. **Stop** (or Esc) stops Claude, the same as Esc in the terminal.
+- **Approvals and questions** appear as the same cards as before, over the friendly view. A choice that needs typing, or **Go to it**, shows the terminal.
+- **Explain terms** works here too, with the same underlines and tooltips.
+
+The friendly view is built from the file Claude Code saves each session in, which the app reads twice a second and only from where it last stopped, so it costs very little. The terminal keeps running underneath and stops drawing while it is hidden. Replies appear a message at a time rather than word by word, because that is how Claude Code saves them, and "Working" shows while Claude is writing one. Anything that only appears in the terminal, such as slash command menus, needs ⌘E.
 
 ## Explain terms
 
