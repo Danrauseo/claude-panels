@@ -95,10 +95,6 @@ function plainOutput(data) {
 function writeOutput(panel, data) {
   if (panel.marker) panel.marker.push(plainOutput(data));
   else panel.term.write(plainOutput(data));
-  if (panel.friendly) {
-    drawLivePreview(panel);
-    checkFriendlyScreen(panel);
-  }
 }
 
 // Fonts that come with the app, in renderer/fonts. They are free fonts under the SIL Open Font License.
@@ -386,8 +382,7 @@ async function toggleOddLayout() {
 function setFocus(panel) {
   focused = panel;
   panels.forEach((p) => p.el.classList.toggle('focused', p === panel));
-  if (panel?.friendly && panel.fv) panel.fv.input.focus();
-  else if (panel?.term) panel.term.focus();
+  if (panel?.term) panel.term.focus();
   else if (panel?.picker) panel.picker.input.focus();
 }
 
@@ -506,7 +501,6 @@ function closePanel(panel, { confirmed = false } = {}) {
     api.kill(panel.ptyId);
     byPtyId.delete(panel.ptyId);
   }
-  if (panel.fvSession) api.unwatchFriendly(panel.fvSession);
   if (peeked === panel) hidePeek(false);
   panel.term?.dispose();
   panel.resizeObserver?.disconnect();
@@ -802,710 +796,6 @@ function registerFileLinks(term) {
   });
 }
 
-// ---------- Friendly view ----------
-
-// A plainer way to look at a session, for people who find the terminal daunting. It shows the same live
-// session as a readable conversation, built from the file Claude Code saves it in: what you asked, what
-// Claude said, and one plain line for each thing Claude did, such as "Reading a file" or "Running a
-// command". The terminal keeps running underneath, out of sight, so ⌘E always shows it again, and
-// approvals and questions still come from it as cards. It is turned on for each harness in Settings.
-
-const baseOf = (p) => String(p || '').split('/').filter(Boolean).pop() || '';
-const humanise = (name) =>
-  String(name || '')
-    .replace(/[_-]+/g, ' ')
-    .replace(/([a-z])([A-Z])/g, '$1 $2')
-    .trim()
-    .toLowerCase();
-
-// One plain line for a tool call: what Claude is doing now, a short detail, and how to count it once done.
-function friendlyStep(name, input = {}) {
-  const host = () => {
-    try {
-      return new URL(input.url).hostname;
-    } catch {
-      return '';
-    }
-  };
-  if (name === 'Read') return { now: 'Reading a file', detail: baseOf(input.file_path), count: ['read', 'file', 'files'] };
-  if (name === 'Edit' || name === 'MultiEdit') return { now: 'Changing a file', detail: baseOf(input.file_path), count: ['changed', 'file', 'files'] };
-  if (name === 'Write') return { now: 'Writing a file', detail: baseOf(input.file_path), count: ['wrote', 'file', 'files'] };
-  if (name === 'NotebookEdit') return { now: 'Changing a notebook', detail: baseOf(input.file_path), count: ['changed', 'notebook', 'notebooks'] };
-  if (name === 'Bash') return { now: 'Running a command', detail: input.description || input.command, count: ['ran', 'command', 'commands'] };
-  if (name === 'Grep') return { now: 'Searching the files', detail: input.pattern ? `for "${input.pattern}"` : '', count: ['searched'] };
-  if (name === 'Glob') return { now: 'Looking for files', detail: input.pattern, count: ['searched'] };
-  if (name === 'WebFetch') return { now: 'Reading a web page', detail: host(), count: ['read', 'web page', 'web pages'] };
-  if (name === 'WebSearch') return { now: 'Searching the web', detail: input.query, count: ['searched the web'] };
-  if (name === 'Task' || name === 'Agent') return { now: 'Asking a helper', detail: input.description, count: ['asked', 'helper', 'helpers'] };
-  if (name === 'TodoWrite') {
-    const todos = input.todos || [];
-    const done = todos.filter((t) => t.status === 'completed').length;
-    return { now: 'Updating its plan', detail: todos.length ? `${done} of ${todos.length} steps done` : '', count: ['updated its plan'] };
-  }
-  if (name === 'AskUserQuestion') return { now: 'Asking you a question', detail: input.question, count: ['asked you a question'] };
-  if (name === 'Skill') return { now: 'Using a skill', detail: input.skill, count: ['used a skill'] };
-  if (name === 'ToolSearch') return { now: 'Getting a tool ready', detail: '', count: null };
-  const mcp = /^mcp__(.+?)__(.+)$/.exec(name);
-  if (mcp) {
-    if (mcp[1] === 'panels') return { now: 'Working with your other terminals', detail: humanise(mcp[2]), count: ['worked with your other terminals'] };
-    const service = mcp[1].replace(/_/g, ' ');
-    return { now: `Using ${service}`, detail: humanise(mcp[2]), count: [`used ${service}`] };
-  }
-  return { now: `Using ${humanise(name)}`, detail: '', count: [`used ${humanise(name)}`] };
-}
-
-// "Read 3 files, changed 1 file and ran 2 commands", from the steps in a finished group.
-function friendlySummary(steps) {
-  const tally = new Map();
-  for (const s of steps) {
-    if (!s.count) continue;
-    const key = s.count.join('|');
-    tally.set(key, { count: s.count, n: (tally.get(key)?.n || 0) + 1 });
-  }
-  const parts = [...tally.values()].map(({ count: [verb, one, many], n }) => {
-    if (!one) return n > 1 && verb === 'searched' ? `searched ${n} times` : verb;
-    return n === 1 ? `${verb} a ${one}` : `${verb} ${n} ${many}`;
-  });
-  if (!parts.length) return 'Got ready';
-  const text = parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)}` : parts[0];
-  return text[0].toUpperCase() + text.slice(1);
-}
-
-// A small part of Markdown, enough for Claude's replies: paragraphs, headings, lists, bold, inline code,
-// code blocks and tables. Everything is escaped first, so nothing in a reply can run as code.
-function friendlyMarkdown(text) {
-  const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  const inline = (s) =>
-    esc(s)
-      .replace(/`([^`]+)`/g, '<code>$1</code>')
-      .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
-      .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, '<a data-href="$2">$1</a>');
-  const out = [];
-  const lines = text.split('\n');
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    if (/^```/.test(line)) {
-      const code = [];
-      while (++i < lines.length && !/^```/.test(lines[i])) code.push(lines[i]);
-      out.push(`<pre>${esc(code.join('\n'))}</pre>`);
-    } else if (/^\s*\|/.test(line)) {
-      const rows = [line];
-      while (i + 1 < lines.length && /^\s*\|/.test(lines[i + 1])) rows.push(lines[++i]);
-      out.push(`<pre>${esc(rows.join('\n'))}</pre>`);
-    } else if (/^#{1,6}\s/.test(line)) {
-      out.push(`<div class="fv-h">${inline(line.replace(/^#+\s*/, ''))}</div>`);
-    } else if (/^\s*([-*•]|\d+\.)\s+/.test(line)) {
-      const items = [line];
-      while (i + 1 < lines.length && /^\s*([-*•]|\d+\.)\s+/.test(lines[i + 1])) items.push(lines[++i]);
-      const tag = /^\s*\d+\./.test(line) ? 'ol' : 'ul';
-      out.push(`<${tag}>${items.map((it) => `<li>${inline(it.replace(/^\s*([-*•]|\d+\.)\s+/, ''))}</li>`).join('')}</${tag}>`);
-    } else if (line.trim()) {
-      const para = [line];
-      while (i + 1 < lines.length && lines[i + 1].trim() && !/^(```|#{1,6}\s|\s*([-*•|]|\d+\.)\s)/.test(lines[i + 1])) para.push(lines[++i]);
-      out.push(`<p>${inline(para.join(' '))}</p>`);
-    }
-  }
-  return out.join('');
-}
-
-// Underlines glossary terms in a reply when Explain terms is on, using the same tooltips as the terminal.
-function friendlyTerms(panel, root) {
-  const key = panel.glossaryKey;
-  const matcher = key && matcherFor(key);
-  if (!matcher) return;
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
-    acceptNode: (n) => (n.parentElement.closest('pre, code, .fv-term') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT),
-  });
-  const nodes = [];
-  while (walker.nextNode()) nodes.push(walker.currentNode);
-  for (const node of nodes) {
-    const found = Explain.findTerms(node.textContent, matcher);
-    if (!found.length) continue;
-    const frag = document.createDocumentFragment();
-    let at = 0;
-    for (const f of found) {
-      frag.append(node.textContent.slice(at, f.start));
-      const span = el('span', `fv-term ${termProgress(key, f.key)}`, f.text);
-      span.addEventListener('mouseenter', (e) => tipHover(key, f.key, e));
-      span.addEventListener('mouseleave', () => tipLeave());
-      frag.append(span);
-      at = f.end;
-    }
-    frag.append(node.textContent.slice(at));
-    node.replaceWith(frag);
-  }
-}
-
-// Claude Code's own slash commands, described plainly for the friendly view's suggestions. Those that
-// open a screen of their own say so, and those that close Claude Code ask first.
-const BUILTIN_COMMANDS = [
-  { name: '/help', description: 'Show what Claude Code can do' },
-  { name: '/clear', description: 'Start a fresh conversation in this terminal' },
-  { name: '/compact', description: 'Summarise the conversation so far, to make room' },
-  { name: '/context', description: 'Show how full the conversation is' },
-  { name: '/model', description: 'Choose which Claude model to use. Opens a menu' },
-  { name: '/resume', description: 'Go back to an earlier conversation. Opens a menu' },
-  { name: '/rename', description: 'Give this session a name' },
-  { name: '/status', description: 'Show your account, model and settings' },
-  { name: '/config', description: 'Open Claude Code settings. Opens a menu' },
-  { name: '/permissions', description: 'See and change what Claude may do without asking. Opens a menu' },
-  { name: '/mcp', description: 'See and manage connected tools. Opens a menu' },
-  { name: '/agents', description: 'See and manage helper agents. Opens a menu' },
-  { name: '/memory', description: "Edit Claude's memory files" },
-  { name: '/init', description: 'Write a CLAUDE.md file that describes this folder' },
-  { name: '/doctor', description: "Check Claude Code's setup for problems" },
-  { name: '/login', description: 'Sign in to Claude' },
-  { name: '/logout', description: 'Sign out of Claude Code', confirm: "This signs you out of Claude Code. You'll need to sign in again before Claude can work." },
-  { name: '/exit', description: 'Close Claude Code in this terminal', confirm: 'This closes Claude Code in this terminal. You can start it again from here.' },
-];
-
-function buildFriendly(panel) {
-  const view = el('div', 'friendly');
-  const log = el('div', 'fv-log');
-  // Shown where Claude's reply will appear, while you wait for it: three pulsing dots, and the reply as
-  // the terminal draws it, until the saved conversation catches up.
-  const working = el('div', 'fv-working');
-  const dots = el('span', 'fv-dots');
-  dots.append(el('i'), el('i'), el('i'));
-  const preview = el('div', 'fv-preview');
-  working.append(dots, preview);
-  working.hidden = true;
-  const compose = el('div', 'fv-compose');
-  const input = el('textarea');
-  input.rows = 1;
-  input.placeholder = 'Tell Claude what you need';
-  const send = el('button', 'btn primary', 'Send');
-  send.type = 'button';
-  const stop = el('button', 'btn', 'Stop');
-  stop.type = 'button';
-  stop.title = 'Stop Claude, the same as pressing Esc in the terminal';
-  stop.hidden = true;
-  const toTerminal = el('button', 'link-btn', 'Show the terminal ⌘E');
-  toTerminal.type = 'button';
-  compose.append(input, stop, send);
-  const foot = el('div', 'fv-foot');
-  foot.append(toTerminal);
-  const screen = el('div', 'fv-screen');
-  screen.hidden = true;
-  const suggest = el('div', 'fv-suggest');
-  suggest.hidden = true;
-  const confirmBox = el('div', 'fv-confirm');
-  confirmBox.hidden = true;
-  view.append(log, screen, suggest, confirmBox, compose, foot);
-
-  // Suggestions while you type a slash command, like the list the terminal shows.
-  let commands = null;
-  let shown = [];
-  let selected = 0;
-  const hideSuggest = () => {
-    suggest.hidden = true;
-    shown = [];
-  };
-  const drawSuggest = async () => {
-    const value = input.value;
-    if (!/^\/\S*$/.test(value)) return hideSuggest();
-    if (!commands) commands = [...BUILTIN_COMMANDS, ...((await api.listCommands(panel.cwd).catch(() => [])) || [])];
-    const want = value.toLowerCase();
-    const starts = commands.filter((c) => c.name.toLowerCase().startsWith(want));
-    const contains = starts.length ? [] : commands.filter((c) => c.name.toLowerCase().includes(want.slice(1)));
-    shown = [...starts, ...contains].slice(0, 8);
-    selected = Math.min(selected, Math.max(0, shown.length - 1));
-    suggest.innerHTML = '';
-    if (!shown.length) {
-      suggest.append(el('div', 'fv-suggest-none', `${value} isn't a command Claude Code knows here. Sending it will tell you so.`));
-    }
-    shown.forEach((c, i) => {
-      const row = el('div', `fv-suggest-row${i === selected ? ' on' : ''}`);
-      row.append(el('span', 'fv-suggest-name', c.name), el('span', 'fv-suggest-desc', c.description || ''));
-      row.addEventListener('mousedown', (e) => {
-        e.preventDefault();
-        complete(c);
-      });
-      suggest.append(row);
-    });
-    suggest.hidden = false;
-  };
-  const complete = (c) => {
-    input.value = c.name + ' ';
-    hideSuggest();
-    input.focus();
-  };
-
-  const submit = () => {
-    const text = input.value.replace(/\s+$/, '');
-    if (!text || !panel.running) return;
-    hideSuggest();
-    // Commands that close Claude Code ask first, in plain words.
-    const risky = BUILTIN_COMMANDS.find((c) => c.confirm && c.name === text.split(/\s/)[0].toLowerCase());
-    if (risky && panel.fv.confirmed !== text) {
-      confirmBox.innerHTML = '';
-      const yes = el('button', 'btn primary', `Send ${risky.name}`);
-      const no = el('button', 'btn', 'Cancel');
-      yes.type = no.type = 'button';
-      yes.addEventListener('click', () => {
-        panel.fv.confirmed = text;
-        confirmBox.hidden = true;
-        submit();
-      });
-      no.addEventListener('click', () => {
-        confirmBox.hidden = true;
-        input.focus();
-      });
-      confirmBox.append(el('span', null, risky.confirm), yes, no);
-      confirmBox.hidden = false;
-      return;
-    }
-    panel.fv.confirmed = null;
-    confirmBox.hidden = true;
-    // A message with several lines goes in as a paste, so its new lines do not send it early. Return is
-    // sent a moment later, so Claude Code takes it as pressing Return rather than part of the text.
-    api.write(panel.ptyId, text.includes('\n') ? `\x1b[200~${text}\x1b[201~` : text);
-    setTimeout(() => api.write(panel.ptyId, '\r'), 80);
-    input.value = '';
-    input.style.height = '';
-    panel.fv.stick = true;
-    panel.fv.awaiting = true;
-    panel.fv.awaitingSince = Date.now();
-    panel.fv.sawWorking = false;
-    drawFriendlyWorking(panel);
-    log.scrollTop = log.scrollHeight;
-  };
-  input.addEventListener('keydown', (e) => {
-    if (!suggest.hidden && shown.length) {
-      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-        e.preventDefault();
-        selected = (selected + (e.key === 'ArrowDown' ? 1 : shown.length - 1)) % shown.length;
-        drawSuggest();
-        return;
-      }
-      if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey && input.value.trim() !== shown[selected].name)) {
-        e.preventDefault();
-        complete(shown[selected]);
-        return;
-      }
-    }
-    if (e.key === 'Escape' && !suggest.hidden) {
-      hideSuggest();
-      return;
-    }
-    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
-      e.preventDefault();
-      submit();
-    } else if (e.key === 'Escape' && panel.lightState === 'working') {
-      api.write(panel.ptyId, '\x1b');
-    }
-  });
-  input.addEventListener('input', () => {
-    selected = 0;
-    confirmBox.hidden = true;
-    drawSuggest();
-    input.style.height = '';
-    input.style.height = `${Math.min(input.scrollHeight, 160)}px`;
-  });
-  send.addEventListener('click', submit);
-  input.addEventListener('blur', () => setTimeout(hideSuggest, 150));
-  stop.addEventListener('click', () => api.write(panel.ptyId, '\x1b'));
-  toTerminal.addEventListener('click', () => setFriendly(panel, false));
-  log.addEventListener('click', (e) => {
-    const a = e.target.closest('a[data-href]');
-    if (a) return openLinkTarget(a.dataset.href);
-    const head = e.target.closest('.fv-activity-head');
-    if (head) head.parentElement.classList.toggle('open');
-  });
-  // Follow new messages, unless you have scrolled up to read something earlier.
-  log.addEventListener('scroll', () => {
-    panel.fv.stick = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
-  });
-
-  panel.fv = { view, log, working, preview, screen, input, stop, steps: new Map(), group: null, stick: true, awaiting: false };
-  panel.body.append(view);
-}
-
-function friendlyGroupHead(group) {
-  const running = group.steps.filter((s) => !s.done);
-  group.head.innerHTML = '';
-  if (running.length) {
-    const s = running.at(-1);
-    group.head.append(el('span', 'fv-pulse', s.now));
-    if (s.detail) group.head.append(el('span', 'fv-detail', s.detail));
-  } else {
-    group.head.append(el('span', 'fv-chevron', '›'), el('span', null, friendlySummary(group.steps)));
-    if (group.steps.some((s) => s.error)) group.head.append(el('span', 'fv-detail', 'one step did not work, so Claude tried another way'));
-  }
-}
-
-function addFriendlyItems(panel, items) {
-  const fv = panel.fv;
-  for (const item of items) {
-    if (item.kind === 'text' || item.kind === 'note' || item.kind === 'error') {
-      fv.awaiting = false;
-      fv.preview.textContent = '';
-    }
-    if (item.kind === 'note' || item.kind === 'error') {
-      fv.group = null;
-      fv.log.append(el('div', `fv-note ${item.kind}`, item.text));
-    } else if (item.kind === 'user' || item.kind === 'text') {
-      fv.group = null;
-      const node = el('div', item.kind === 'user' ? 'fv-user' : 'fv-text');
-      if (item.kind === 'user') node.textContent = item.text;
-      else {
-        node.innerHTML = friendlyMarkdown(item.text);
-        friendlyTerms(panel, node);
-      }
-      fv.log.append(node);
-    } else if (item.kind === 'tool') {
-      if (!fv.group) {
-        const box = el('div', 'fv-activity');
-        fv.group = { box, head: el('div', 'fv-activity-head'), list: el('div', 'fv-steps'), steps: [] };
-        box.append(fv.group.head, fv.group.list);
-        fv.log.append(box);
-      }
-      const step = { ...friendlyStep(item.name, item.input), done: false, group: fv.group };
-      const row = el('div', 'fv-step');
-      row.append(el('span', null, step.now));
-      if (step.detail) row.append(el('span', 'fv-detail', step.detail));
-      row.title = item.input.command || item.input.file_path || item.input.url || '';
-      fv.group.list.append(row);
-      fv.group.steps.push(step);
-      fv.steps.set(item.id, step);
-      friendlyGroupHead(fv.group);
-    } else if (item.kind === 'result') {
-      const step = fv.steps.get(item.id);
-      if (!step) continue;
-      step.done = true;
-      step.error = item.error;
-      fv.steps.delete(item.id);
-      friendlyGroupHead(step.group);
-    }
-  }
-  // Keep only the latest part of a very long conversation on the page.
-  while (fv.log.childElementCount > 600) fv.log.firstElementChild.remove();
-  drawFriendlyWorking(panel);
-  if (fv.stick) fv.log.scrollTop = fv.log.scrollHeight;
-}
-
-// "Working" shows while Claude is busy and no step is running, for example while it writes a reply.
-function drawFriendlyWorking(panel) {
-  const fv = panel.fv;
-  if (!fv) return;
-  // After you send something the dots show straight away, before the light catches up. They stop once
-  // Claude has worked and finished, or after a few seconds if Claude never started, as after a slash
-  // command that only changes a setting or opens a screen of Claude Code's own.
-  if (fv.awaiting) {
-    if (panel.lightState === 'working') fv.sawWorking = true;
-    else if (fv.sawWorking || Date.now() - fv.awaitingSince > 5000) fv.awaiting = false;
-  }
-  const busy = panel.running && (panel.lightState === 'working' || fv.awaiting);
-  const stepRunning = fv.steps.size > 0;
-  fv.working.hidden = !busy || stepRunning;
-  fv.stop.hidden = !busy;
-  // Always the last thing in the conversation, where the reply will appear.
-  if (fv.log.lastElementChild !== fv.working) fv.log.append(fv.working);
-}
-
-// Claude Code saves a reply once it is written, but draws it in the terminal as it goes. While you wait,
-// the friendly view shows the reply as drawn so far, faintly, read from the bottom of the screen: the
-// lines after Claude Code's last ⏺ mark, if that mark starts text rather than a tool call. It is checked
-// at most four times a second, and only while Claude is working.
-function readLivePreview(panel) {
-  const b = panel.term.buffer.active;
-  const rows = [];
-  for (let y = 0; y < panel.term.rows; y++) rows.push(b.getLine(b.viewportY + y)?.translateToString(true) ?? '');
-  let start = -1;
-  for (let i = rows.length - 1; i >= 0; i--) {
-    if (/^\s*⏺\s/.test(rows[i])) {
-      start = i;
-      break;
-    }
-  }
-  if (start < 0 || /^\s*⏺\s+[\w.:-]+(\s[\w.:-]+)?\(/.test(rows[start])) return '';
-  const lines = [];
-  for (let i = start; i < rows.length; i++) {
-    const r = rows[i];
-    if (i > start && (/^\s*[─━╭╰]{8,}/.test(r) || /^\s*[⏺✻✶✳✢·*]\s/.test(r) || /^\S/.test(r))) break;
-    lines.push(r.replace(/^\s*⏺\s/, '').replace(/^ {2}/, ''));
-  }
-  // The terminal breaks lines at its width. Join them back into paragraphs, keeping list items apart.
-  let text = '';
-  for (const line of lines) {
-    const t = line.trim();
-    if (!t) text += '\n\n';
-    else if (!text || text.endsWith('\n') || /^([-*•]|\d+\.)\s/.test(t)) text += (text && !text.endsWith('\n') ? '\n' : '') + t;
-    else text += ' ' + t;
-  }
-  return text.replace(/\n{3,}/g, '\n\n').trim();
-}
-
-function drawLivePreview(panel) {
-  const fv = panel.fv;
-  if (!fv || fv.previewTimer) return;
-  fv.previewTimer = setTimeout(() => {
-    fv.previewTimer = null;
-    const busy = panel.lightState === 'working' || fv.awaiting;
-    const text = busy && fv.steps.size === 0 ? readLivePreview(panel) : '';
-    // Once the saved conversation has the reply, the preview has done its job.
-    const last = [...fv.log.querySelectorAll('.fv-text')].at(-1)?.textContent.replace(/\s+/g, ' ') || '';
-    const flat = text.replace(/\s+/g, ' ').slice(0, 60);
-    fv.preview.textContent = flat && last.includes(flat) ? '' : text;
-    if (fv.stick) fv.log.scrollTop = fv.log.scrollHeight;
-  }, 250);
-}
-
-// Some things only ever appear on the terminal's screen, never in the saved conversation: signing in,
-// "press Enter to continue", menus such as /model, and other screens of Claude Code's own. When the
-// terminal is showing something other than its usual input box, and it is not a question the approval
-// cards already handle, the friendly view shows the bottom of the screen as plain text with the keys
-// it is likely to need, and a way to open the terminal itself.
-function readOtherScreen(p) {
-  if (!p.term || !p.running) return null;
-  const b = p.term.buffer.active;
-  const rows = [];
-  for (let y = 0; y < p.term.rows; y++) rows.push(b.getLine(b.viewportY + y)?.translateToString(true) ?? '');
-  const filled = rows.filter((r) => r.trim());
-  if (!filled.length) return null;
-  // Claude Code's input box: a line starting with > or ❯ with a line across the panel just above it. A
-  // numbered choice is not it, and neither is a shell prompt, which has no line above it.
-  const promptRow = /^\s*[│┃]?\s*[>❯›](?!\s*\d+\.)(\s|$)/;
-  const rule = /^\s*[╭╰]?[─━]{10,}/;
-  const tail = filled.slice(-10);
-  if (tail.some((r, i) => promptRow.test(r) && (rule.test(tail[i - 1] || '') || rule.test(tail[i - 2] || '')))) return null;
-
-  // Join rows that carry on into the next one, so a long link stays whole, and drop lines that are
-  // only borders.
-  const lines = [];
-  let carry = '';
-  for (const r of rows.slice(-Math.min(rows.length, 30))) {
-    const text = carry + r.trim();
-    if (r.length >= p.term.cols && /\S$/.test(r)) {
-      carry = text;
-      continue;
-    }
-    carry = '';
-    const plain = text.replace(/^[│┃╭╮╰╯─━\s]+|[│┃╭╮╰╯─━\s]+$/g, '');
-    // Leave out pictures drawn with blocks, stars and dots, such as the logo on the sign-in screen.
-    const visible = plain.replace(/\s/g, '');
-    const letters = (visible.match(/[A-Za-z0-9]/g) || []).length;
-    if (plain && (visible.length < 4 || letters / visible.length > 0.4)) lines.push(plain);
-  }
-  if (carry) lines.push(carry);
-  const shown = lines.slice(-12);
-  const menu = readScreenMenu(rows, rule);
-  // With no line across the panel anywhere, Claude Code is not drawing, so it has closed and left the
-  // terminal at the shell, as it does after /logout or /exit.
-  const closed = !rows.some((r) => rule.test(r)) && /[%$#❯>]\s*$/.test(filled.at(-1));
-  if (menu) return { lines: shown, menu, closed: false, key: menu.question + '|' + menu.options.map((o) => (o.selected ? '>' : '') + o.label).join('|') };
-  return shown.length ? { lines: shown, key: shown.join('\n'), closed } : null;
-}
-
-// A menu drawn by Claude Code, such as the theme picker or /model: a list of lines in a column, one of
-// them marked with ❯. Returns its question, its choices and which one is selected.
-function readScreenMenu(rows, rule) {
-  const marked = /^(\s*)[❯›]\s+(?:\d+\.\s+)?(\S.*?)\s*$/;
-  let m = -1;
-  for (let i = rows.length - 1; i >= 0; i--) if (marked.test(rows[i])) { m = i; break; }
-  if (m < 0) return null;
-  const at = rows[m].search(/[❯›]\s+\S/);
-  const col = at + rows[m].slice(at + 1).search(/\S/) + 1; // where the choice's words start
-  const option = (r) => {
-    if (!r.trim() || rule.test(r)) return null;
-    const mk = marked.exec(r);
-    if (mk) return { label: mk[2], selected: true };
-    const start = r.search(/\S/);
-    if (Math.abs(start - col) > 1 && Math.abs(start - (col + 3)) > 1) return null;
-    return { label: r.trim().replace(/^\d+\.\s+/, ''), selected: false };
-  };
-  let first = m;
-  while (first > 0 && option(rows[first - 1])) first--;
-  let last = m;
-  while (last < rows.length - 1 && option(rows[last + 1])) last++;
-  const options = rows.slice(first, last + 1).map(option);
-  if (options.length < 2) return null;
-  let q = first - 1;
-  while (q >= 0 && !rows[q].trim()) q--;
-  const question = q >= 0 && !rule.test(rows[q]) ? rows[q].replace(/[│┃]/g, '').trim() : '';
-  return { question, options };
-}
-
-// Checks the terminal straight away, for when output arrives or after a button is pressed, so the card
-// keeps up with the screen. It runs at most every tenth of a second.
-function checkFriendlyScreen(panel) {
-  if (!panel.friendly || !panel.fv || panel.fv.screenTimer) return;
-  panel.fv.screenTimer = setTimeout(() => {
-    panel.fv.screenTimer = null;
-    const asking = readApproval(panel);
-    drawFriendlyScreen(panel, asking ? null : readOtherScreen(panel));
-  }, 100);
-}
-
-function drawFriendlyScreen(panel, screen) {
-  const fv = panel.fv;
-  if (!fv) return;
-  if (!screen) {
-    fv.pendingScreen = null;
-    fv.screen.hidden = true;
-    fv.screenKey = null;
-    return;
-  }
-  if (fv.screenKey === screen.key) return;
-  // A new card waits a moment, so a passing screen, such as Claude Code starting, does not flash one.
-  // A card that is already showing follows the screen straight away.
-  if (fv.screen.hidden) {
-    if (screen.key !== fv.pendingScreen) {
-      fv.pendingScreen = screen.key;
-      fv.pendingAt = Date.now();
-      setTimeout(() => checkFriendlyScreen(panel), 260);
-      return;
-    }
-    if (Date.now() - fv.pendingAt < 250) return;
-  }
-  fv.screenKey = screen.key;
-
-  const text = screen.lines.join('\n');
-  const title = screen.closed
-    ? 'Claude Code has closed in this terminal'
-    : /press enter|enter to continue|press any key/i.test(text)
-    ? 'Claude Code is waiting for you to continue'
-    : /log ?in|sign ?in|authenticat|api key|oauth/i.test(text)
-      ? 'Claude needs you to sign in'
-      : /trust/i.test(text) && /folder|files/i.test(text)
-        ? 'Claude Code is asking whether to trust this folder'
-        : 'The terminal needs you';
-  const keys = (label, seq, primary) => {
-    const b = el('button', primary ? 'btn primary' : 'btn', label);
-    b.type = 'button';
-    b.addEventListener('click', () => {
-      api.write(panel.ptyId, seq);
-      fv.input.focus();
-      checkFriendlyScreen(panel);
-    });
-    return b;
-  };
-  if (screen.menu) {
-    // A menu becomes a list of choices. Choosing one moves Claude Code's selection to it with the arrow
-    // keys and presses Return, the same as doing it in the terminal.
-    const { question, options } = screen.menu;
-    const from = options.findIndex((o) => o.selected);
-    fv.screen.innerHTML = '';
-    fv.screen.append(el('div', 'fv-screen-title', question || 'Claude Code is asking you to choose'));
-    const list = el('div', 'fv-options');
-    options.forEach((o, i) => {
-      const b = el('button', `fv-option${o.selected ? ' on' : ''}`, o.label);
-      b.type = 'button';
-      b.addEventListener('click', () => {
-        const step = i > from ? '\x1b[B' : '\x1b[A';
-        const keys = [...Array(Math.abs(i - from)).fill(step), '\r'];
-        keys.forEach((k, n) => setTimeout(() => api.write(panel.ptyId, k), n * 30));
-        setTimeout(() => checkFriendlyScreen(panel), keys.length * 30 + 50);
-        fv.input.focus();
-      });
-      list.append(b);
-    });
-    fv.screen.append(list);
-    const actions = el('div', 'fv-screen-actions');
-    const term = el('button', 'link-btn', 'Open the terminal');
-    term.type = 'button';
-    term.addEventListener('click', () => setFriendly(panel, false));
-    actions.append(keys('Back (Esc)', '\x1b'), term);
-    fv.screen.append(actions);
-    fv.screen.hidden = false;
-    return;
-  }
-  fv.screen.innerHTML = '';
-  fv.screen.append(el('div', 'fv-screen-title', title));
-  fv.screen.append(el('pre', 'fv-screen-text', text));
-  const actions = el('div', 'fv-screen-actions');
-  for (const url of new Set(text.match(/https?:\/\/[^\s'"<>]+/g) || [])) {
-    const open = el('button', 'btn primary', 'Open the link');
-    open.type = 'button';
-    open.title = url;
-    open.addEventListener('click', () => openLinkTarget(url));
-    actions.append(open);
-  }
-  const hasLink = actions.childElementCount > 0;
-  actions.append(
-    keys(/press enter|enter to continue/i.test(text) ? 'Continue' : 'Enter', '\r', !hasLink),
-    keys('↑', '\x1b[A'),
-    keys('↓', '\x1b[B'),
-    keys('Back (Esc)', '\x1b')
-  );
-  const term = el('button', 'link-btn', 'Open the terminal');
-  term.type = 'button';
-  term.addEventListener('click', () => setFriendly(panel, false));
-  actions.append(term);
-  fv.screen.append(actions);
-  if (screen.closed) {
-    // Claude Code was started with the app's own settings, so start it again the way the app does:
-    // resume this session in a fresh terminal.
-    actions.innerHTML = '';
-    const again = el('button', 'btn primary', 'Start Claude again');
-    again.type = 'button';
-    again.addEventListener('click', () => restartFriendly(panel));
-    actions.append(again, term);
-    fv.screen.append(el('div', 'fv-screen-hint', 'This happens after /logout or /exit. Starting again picks up this conversation where it left off.'));
-  } else {
-    fv.screen.append(el('div', 'fv-screen-hint', 'If it asks you to paste a code, paste it in the box below and press Return.'));
-    fv.screen.lastChild.hidden = !/code/i.test(text);
-  }
-  fv.screen.hidden = false;
-}
-
-// Starts Claude again in a terminal where it has closed, resuming the same session in the same folder.
-async function restartFriendly(panel) {
-  const { cwd, harnessName, sessionId, title } = panel;
-  const known = new Set((await api.listSessions()).map((s) => s.id));
-  if (panel.fvSession) api.unwatchFriendly(panel.fvSession);
-  if (panel.ptyId !== null) {
-    api.kill(panel.ptyId);
-    byPtyId.delete(panel.ptyId);
-  }
-  panel.resizeObserver?.disconnect();
-  panel.term?.dispose();
-  Object.assign(panel, { ptyId: null, term: null, fit: null, running: false, friendly: false, fv: null, fvSession: null, marker: null, keepFriendly: true });
-  panel.el.classList.remove('friendly-on');
-  await launch(panel, cwd, { resumeId: known.has(sessionId) ? sessionId : null, title, harnessName, name: panel.name });
-}
-
-function setFriendly(panel, on) {
-  if (!panel?.term || Boolean(panel.friendly) === on) return;
-  panel.friendly = on;
-  const host = panel.body.querySelector('.term-host');
-  if (on) {
-    if (!panel.fv) buildFriendly(panel);
-    panel.fv.view.hidden = false;
-    // Hidden, the terminal stops drawing but keeps reading Claude Code's output, so approvals still work.
-    host.style.display = 'none';
-    watchFriendly(panel);
-    if (focused === panel) panel.fv.input.focus();
-  } else {
-    if (panel.fv) panel.fv.view.hidden = true;
-    host.style.display = '';
-    if (panel.fvSession) api.unwatchFriendly(panel.fvSession);
-    panel.fvSession = null;
-    panel.fit.fit();
-    if (focused === panel) panel.term.focus();
-  }
-  panel.el.classList.toggle('friendly-on', on);
-  scanApprovals();
-}
-
-function watchFriendly(panel) {
-  if (!panel.friendly || !panel.sessionId || panel.fvSession === panel.sessionId) return;
-  if (panel.fvSession) api.unwatchFriendly(panel.fvSession);
-  panel.fvSession = panel.sessionId;
-  api.watchFriendly(panel.sessionId);
-}
-
-api.onFriendlyItems((sessionId, items, first) => {
-  const panel = panels.find((p) => p.fvSession === sessionId);
-  if (!panel?.fv) return;
-  if (first) {
-    panel.fv.log.innerHTML = '';
-    panel.fv.steps.clear();
-    panel.fv.group = null;
-  }
-  addFriendlyItems(panel, items);
-});
-
 // ---------- Explain terms ----------
 
 // With the Explain box ticked on a harness, Claude adds the words that structure the work to a glossary
@@ -1752,8 +1042,6 @@ async function launch(panel, dir, { resumeId = null, title = null, harnessName =
       advisor: harness?.advisor || settings.defaultAdvisor || '',
       explain: Boolean(harness?.explain),
     });
-    panel.friendlyAtStart = Boolean(harness?.friendly) || Boolean(panel.keepFriendly);
-    panel.keepFriendly = false;
     panel.ptyId = started.id;
     panel.sessionId = started.sessionId;
     panel.codeMode = Boolean(started.codeMode);
@@ -1790,7 +1078,6 @@ async function launch(panel, dir, { resumeId = null, title = null, harnessName =
   // If a harness filter is on and this terminal is in a different harness, show everything again.
   if (filterKey && groupOf(panel).key !== filterKey) filterKey = null;
   applyLayout();
-  if (panel.friendlyAtStart) setFriendly(panel, true);
 
   // This folder is now a recent one, so refresh the lists in any other new panels.
   settings = { ...settings, ...(await api.getSettings()) };
@@ -2705,7 +1992,6 @@ function followNewSessions() {
       .sort((a, b) => b.updated - a.updated)[0];
     if (current && current.id !== p.sessionId) {
       p.sessionId = current.id;
-      watchFriendly(p);
       saveWorkspace();
     }
   }
@@ -2981,7 +2267,6 @@ function drawOwnLight(panel, act) {
   const state = !panel.cwd ? '' : !panel.running ? 'off' : act.pending || act.working ? 'working' : 'idle';
   light.className = `own-light ${state}`;
   panel.lightState = state;
-  drawFriendlyWorking(panel);
   light.title = { working: 'Claude is working', idle: 'Claude is waiting for you', off: 'This session has ended', '': '' }[state];
 }
 
@@ -3297,13 +2582,8 @@ function scanApprovals() {
   for (const p of panels) {
     const asking = readApproval(p);
     p.needsApproval = Boolean(asking);
-    if (p.friendly) {
-      drawFriendlyScreen(p, asking ? null : readOtherScreen(p));
-      drawFriendlyWorking(p);
-    }
     const onScreen = visiblePanels().includes(p) || p === peeked;
-    // In the friendly view the terminal is hidden, so its own questions show as a card too.
-    const req = p === focused && onScreen && !p.friendly ? null : asking;
+    const req = p === focused && onScreen ? null : asking;
     const shown = approvalCards.get(p);
     if (!req) {
       if (shown) {
@@ -3315,7 +2595,7 @@ function scanApprovals() {
     if (shown?.key === req.key && shown.card.isConnected && shown.host === focused) continue;
     shown?.card.remove();
     const card = buildApprovalCard(p, req);
-    const host = focused && (focused !== p || p.friendly) ? focused.body : document.body;
+    const host = focused && focused !== p ? focused.body : document.body;
     host.append(card);
     approvalCards.set(p, { key: req.key, card, host: focused });
   }
@@ -3335,10 +2615,7 @@ function buildApprovalCard(p, req) {
   pill.style.setProperty('--hue', harnessColour(p.harnessName || baseName(p.cwd)));
   head.append(el('span', 'num', String(p.number)), pill, el('span', null, req.options.length > 0 && /^Do you want/i.test(req.question) ? 'needs your approval' : 'is asking you'));
   const go = el('button', 'link-btn', 'Go to it');
-  go.addEventListener('click', () => {
-    showPanel(p);
-    setFriendly(p, false);
-  });
+  go.addEventListener('click', () => showPanel(p));
   head.append(go);
   card.append(head);
   for (const d of req.details) card.append(el('div', 'approval-detail', d));
@@ -3360,10 +2637,8 @@ function buildApprovalCard(p, req) {
       api.write(p.ptyId, o.n); // the same as pressing that number in that terminal
       card.remove();
       approvalCards.delete(p);
-      if (needsTyping) {
-        showPanel(p);
-        setFriendly(p, false);
-      } else setFocus(focused);
+      if (needsTyping) showPanel(p);
+      else setFocus(focused);
     });
     choices.append(b);
   }
@@ -3435,7 +2710,7 @@ function fillSelect(select, firstLabel, choices, value) {
 function renderHarnessList() {
   harnessList.innerHTML = '';
   const head = el('div', 'harness-row head');
-  for (const t of ['Harness', 'Model', 'Advisor', 'Code Mode', 'Explain', 'Friendly', '']) head.append(el('span', null, t));
+  for (const t of ['Harness', 'Model', 'Advisor', 'Code Mode', 'Explain', '']) head.append(el('span', null, t));
   harnessList.append(head);
 
   const select = (firstLabel, choices, value, save) => {
@@ -3462,7 +2737,6 @@ function renderHarnessList() {
     select("Claude Code's", ADVISOR_CHOICES, settings.defaultAdvisor, (v) => saveSettings({ defaultAdvisor: v })),
     el('span'),
     el('span'),
-    el('span'),
     el('span')
   );
   harnessList.append(def);
@@ -3486,13 +2760,6 @@ function renderHarnessList() {
     explainBox.addEventListener('change', () => saveHarness(h, { explain: explainBox.checked }));
     const explain = el('span', 'harness-code');
     explain.append(explainBox);
-    const friendlyBox = el('input');
-    friendlyBox.type = 'checkbox';
-    friendlyBox.checked = Boolean(h.friendly);
-    friendlyBox.title = 'Open sessions here in the friendly view, a plainer view of the conversation. ⌘E shows the terminal';
-    friendlyBox.addEventListener('change', () => saveHarness(h, { friendly: friendlyBox.checked }));
-    const friendly = el('span', 'harness-code');
-    friendly.append(friendlyBox);
     const remove = el('button', 'icon-x', '×');
     remove.type = 'button';
     remove.title = `Remove /${slug(h.name)}`;
@@ -3507,7 +2774,6 @@ function renderHarnessList() {
       select('Default', ADVISOR_CHOICES, h.advisor, (v) => saveHarness(h, { advisor: v })),
       code,
       explain,
-      friendly,
       remove
     );
     harnessList.append(row);
@@ -3775,7 +3041,6 @@ api.onMenu('to-background', () => focused && toggleBackground(focused));
 api.onMenu('stack', toggleStack);
 api.onMenu('restore', restoreWorkspace);
 api.onMenu('settings', openSettings);
-api.onMenu('friendly', () => focused?.term && setFriendly(focused, !focused.friendly));
 
 // ⌘1 to ⌘9 jump to that terminal, showing it if a filter hides it. In the stack view they open a harness.
 window.addEventListener('keydown', (e) => {
