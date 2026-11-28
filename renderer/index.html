@@ -118,6 +118,7 @@
           <button type="button" data-page="sessions">Sessions</button>
           <button type="button" data-page="display">Display</button>
           <button type="button" data-page="simple">Simple</button>
+          <button type="button" data-page="glossary">Glossary</button>
         </nav>
         <div class="settings-pages">
           <section class="settings-page" data-page="harnesses">
@@ -197,6 +198,11 @@
               <input id="font-size" type="number" min="9" max="24" />
             </div>
             <p class="note">Press <kbd>⌘/</kbd> to see every keyboard shortcut.</p>
+          </section>
+
+          <section class="settings-page" data-page="glossary">
+            <p class="page-intro">Tick <b>Explain</b> on a harness and Claude adds the words that structure the work there to a glossary. They are underlined in the terminal, and holding the mouse over one explains it. The underline fades as you learn the word, and goes once you say you know it.</p>
+            <div id="codex-list" class="codex-list"></div>
           </section>
 
           <section class="settings-page" data-page="simple">
@@ -328,6 +334,7 @@
   <script src="../node_modules/@xterm/xterm/lib/xterm.js"></script>
   <script src="../node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
   <script src="../node_modules/@xterm/addon-web-links/lib/addon-web-links.js"></script>
+  <script src="explain.js"></script>
   <script src="renderer.js"></script>
 </body>
 </html>
