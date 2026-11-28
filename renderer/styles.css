@@ -979,10 +979,27 @@ body > .approval-card { position: fixed; }
 .fv-pulse { color: var(--accent-text); animation: fv-pulse 1.4s ease-in-out infinite; }
 @keyframes fv-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 @media (prefers-reduced-motion: reduce) { .fv-pulse { animation: none; } }
-.fv-working { padding: 2px 18px 6px; font-size: 12.5px; }
+.fv-working { display: flex; flex-direction: column; gap: 6px; max-width: 760px; }
+.fv-dots { display: inline-flex; gap: 4px; padding: 6px 0 2px; }
+.fv-dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); animation: fv-pulse 1.2s ease-in-out infinite; }
+.fv-dots i:nth-child(2) { animation-delay: 0.2s; }
+.fv-dots i:nth-child(3) { animation-delay: 0.4s; }
+@media (prefers-reduced-motion: reduce) { .fv-dots i { animation: none; } }
+.fv-preview { color: var(--muted); white-space: pre-wrap; opacity: 0.8; }
+.fv-preview:empty { display: none; }
 .fv-working[hidden] { display: none; }
 .fv-compose { display: flex; gap: 8px; align-items: flex-end; padding: 8px 12px 4px; border-top: 1px solid var(--border); }
 .fv-compose textarea { flex: 1; resize: none; font: inherit; color: var(--text); background: rgba(0, 0, 0, 0.18); border: 1px solid var(--border-strong); border-radius: 8px; padding: 7px 10px; outline: none; max-height: 160px; }
 .fv-compose textarea:focus { border-color: var(--focus); }
 .fv-compose .btn[hidden] { display: none; }
 .fv-foot { display: flex; justify-content: flex-end; padding: 0 14px 6px; font-size: 11px; }
+.fv-note { align-self: center; max-width: 90%; font-size: 12px; color: var(--muted); white-space: pre-wrap; text-align: center; }
+.fv-note.error { color: #e7c98a; }
+.fv-screen { margin: 0 12px 8px; padding: 10px 12px; border: 1px solid rgba(232, 176, 74, 0.5); border-radius: 10px; background: rgba(26, 22, 14, 0.9); }
+.fv-screen[hidden] { display: none; }
+.fv-screen-title { color: #e7c98a; font-weight: 500; margin-bottom: 6px; }
+.fv-screen-text { font-family: "JetBrains Mono", Menlo, monospace; font-size: 11.5px; color: var(--muted); white-space: pre-wrap; word-break: break-all; max-height: 180px; overflow-y: auto; margin: 0 0 8px; }
+.fv-screen-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.fv-screen-actions .link-btn { margin-left: auto; font-size: 11.5px; }
+.fv-screen-hint { margin-top: 6px; font-size: 11.5px; color: var(--muted); }
+.fv-screen-hint[hidden] { display: none; }

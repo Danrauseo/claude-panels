@@ -95,6 +95,7 @@ function plainOutput(data) {
 function writeOutput(panel, data) {
   if (panel.marker) panel.marker.push(plainOutput(data));
   else panel.term.write(plainOutput(data));
+  if (panel.friendly) drawLivePreview(panel);
 }
 
 // Fonts that come with the app, in renderer/fonts. They are free fonts under the SIL Open Font License.
@@ -935,8 +936,13 @@ function friendlyTerms(panel, root) {
 function buildFriendly(panel) {
   const view = el('div', 'friendly');
   const log = el('div', 'fv-log');
+  // Shown where Claude's reply will appear, while you wait for it: three pulsing dots, and the reply as
+  // the terminal draws it, until the saved conversation catches up.
   const working = el('div', 'fv-working');
-  working.append(el('span', 'fv-pulse', 'Working'));
+  const dots = el('span', 'fv-dots');
+  dots.append(el('i'), el('i'), el('i'));
+  const preview = el('div', 'fv-preview');
+  working.append(dots, preview);
   working.hidden = true;
   const compose = el('div', 'fv-compose');
   const input = el('textarea');
@@ -953,7 +959,9 @@ function buildFriendly(panel) {
   compose.append(input, stop, send);
   const foot = el('div', 'fv-foot');
   foot.append(toTerminal);
-  view.append(log, working, compose, foot);
+  const screen = el('div', 'fv-screen');
+  screen.hidden = true;
+  view.append(log, screen, compose, foot);
 
   const submit = () => {
     const text = input.value.replace(/\s+$/, '');
@@ -965,6 +973,9 @@ function buildFriendly(panel) {
     input.value = '';
     input.style.height = '';
     panel.fv.stick = true;
+    panel.fv.awaiting = true;
+    drawFriendlyWorking(panel);
+    log.scrollTop = log.scrollHeight;
   };
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
@@ -992,7 +1003,7 @@ function buildFriendly(panel) {
     panel.fv.stick = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
   });
 
-  panel.fv = { view, log, working, input, stop, steps: new Map(), group: null, stick: true };
+  panel.fv = { view, log, working, preview, screen, input, stop, steps: new Map(), group: null, stick: true, awaiting: false };
   panel.body.append(view);
 }
 
@@ -1012,7 +1023,14 @@ function friendlyGroupHead(group) {
 function addFriendlyItems(panel, items) {
   const fv = panel.fv;
   for (const item of items) {
-    if (item.kind === 'user' || item.kind === 'text') {
+    if (item.kind === 'text' || item.kind === 'note' || item.kind === 'error') {
+      fv.awaiting = false;
+      fv.preview.textContent = '';
+    }
+    if (item.kind === 'note' || item.kind === 'error') {
+      fv.group = null;
+      fv.log.append(el('div', `fv-note ${item.kind}`, item.text));
+    } else if (item.kind === 'user' || item.kind === 'text') {
       fv.group = null;
       const node = el('div', item.kind === 'user' ? 'fv-user' : 'fv-text');
       if (item.kind === 'user') node.textContent = item.text;
@@ -1054,11 +1072,158 @@ function addFriendlyItems(panel, items) {
 
 // "Working" shows while Claude is busy and no step is running, for example while it writes a reply.
 function drawFriendlyWorking(panel) {
-  if (!panel.fv) return;
-  const busy = panel.running && panel.lightState === 'working';
-  const stepRunning = [...panel.fv.steps.values()].length > 0;
-  panel.fv.working.hidden = !busy || stepRunning;
-  panel.fv.stop.hidden = !busy;
+  const fv = panel.fv;
+  if (!fv) return;
+  const busy = panel.running && (panel.lightState === 'working' || fv.awaiting);
+  const stepRunning = fv.steps.size > 0;
+  fv.working.hidden = !busy || stepRunning;
+  fv.stop.hidden = !busy;
+  // Always the last thing in the conversation, where the reply will appear.
+  if (fv.log.lastElementChild !== fv.working) fv.log.append(fv.working);
+}
+
+// Claude Code saves a reply once it is written, but draws it in the terminal as it goes. While you wait,
+// the friendly view shows the reply as drawn so far, faintly, read from the bottom of the screen: the
+// lines after Claude Code's last ⏺ mark, if that mark starts text rather than a tool call. It is checked
+// at most four times a second, and only while Claude is working.
+function readLivePreview(panel) {
+  const b = panel.term.buffer.active;
+  const rows = [];
+  for (let y = 0; y < panel.term.rows; y++) rows.push(b.getLine(b.viewportY + y)?.translateToString(true) ?? '');
+  let start = -1;
+  for (let i = rows.length - 1; i >= 0; i--) {
+    if (/^\s*⏺\s/.test(rows[i])) {
+      start = i;
+      break;
+    }
+  }
+  if (start < 0 || /^\s*⏺\s+[\w.:-]+(\s[\w.:-]+)?\(/.test(rows[start])) return '';
+  const lines = [];
+  for (let i = start; i < rows.length; i++) {
+    const r = rows[i];
+    if (i > start && (/^\s*[─━╭╰]{8,}/.test(r) || /^\s*[⏺✻✶✳✢·*]\s/.test(r) || /^\S/.test(r))) break;
+    lines.push(r.replace(/^\s*⏺\s/, '').replace(/^ {2}/, ''));
+  }
+  // The terminal breaks lines at its width. Join them back into paragraphs, keeping list items apart.
+  let text = '';
+  for (const line of lines) {
+    const t = line.trim();
+    if (!t) text += '\n\n';
+    else if (!text || text.endsWith('\n') || /^([-*•]|\d+\.)\s/.test(t)) text += (text && !text.endsWith('\n') ? '\n' : '') + t;
+    else text += ' ' + t;
+  }
+  return text.replace(/\n{3,}/g, '\n\n').trim();
+}
+
+function drawLivePreview(panel) {
+  const fv = panel.fv;
+  if (!fv || fv.previewTimer) return;
+  fv.previewTimer = setTimeout(() => {
+    fv.previewTimer = null;
+    const busy = panel.lightState === 'working' || fv.awaiting;
+    const text = busy && fv.steps.size === 0 ? readLivePreview(panel) : '';
+    // Once the saved conversation has the reply, the preview has done its job.
+    const last = [...fv.log.querySelectorAll('.fv-text')].at(-1)?.textContent.replace(/\s+/g, ' ') || '';
+    const flat = text.replace(/\s+/g, ' ').slice(0, 60);
+    fv.preview.textContent = flat && last.includes(flat) ? '' : text;
+    if (fv.stick) fv.log.scrollTop = fv.log.scrollHeight;
+  }, 250);
+}
+
+// Some things only ever appear on the terminal's screen, never in the saved conversation: signing in,
+// "press Enter to continue", menus such as /model, and other screens of Claude Code's own. When the
+// terminal is showing something other than its usual input box, and it is not a question the approval
+// cards already handle, the friendly view shows the bottom of the screen as plain text with the keys
+// it is likely to need, and a way to open the terminal itself.
+function readOtherScreen(p) {
+  if (!p.term || !p.running) return null;
+  const b = p.term.buffer.active;
+  const rows = [];
+  for (let y = 0; y < p.term.rows; y++) rows.push(b.getLine(b.viewportY + y)?.translateToString(true) ?? '');
+  const filled = rows.filter((r) => r.trim());
+  if (!filled.length) return null;
+  // Claude Code's input box: a line starting with > or ❯ near the bottom. A numbered choice is not it.
+  const promptRow = /^\s*[│┃]?\s*[>❯›](?!\s*\d+\.)(\s|$)/;
+  if (filled.slice(-10).some((r) => promptRow.test(r))) return null;
+
+  // Join rows that carry on into the next one, so a long link stays whole, and drop lines that are
+  // only borders.
+  const lines = [];
+  let carry = '';
+  for (const r of rows.slice(-Math.min(rows.length, 30))) {
+    const text = carry + r.trim();
+    if (r.length >= p.term.cols && /\S$/.test(r)) {
+      carry = text;
+      continue;
+    }
+    carry = '';
+    const plain = text.replace(/^[│┃╭╮╰╯─━\s]+|[│┃╭╮╰╯─━\s]+$/g, '');
+    if (plain) lines.push(plain);
+  }
+  if (carry) lines.push(carry);
+  const shown = lines.slice(-12);
+  return shown.length ? { lines: shown, key: shown.join('\n') } : null;
+}
+
+function drawFriendlyScreen(panel, screen) {
+  const fv = panel.fv;
+  if (!fv) return;
+  // A screen has to stay for two checks in a row, so a passing moment, such as Claude Code starting,
+  // does not flash a card.
+  if (!screen || screen.key !== fv.pendingScreen) {
+    fv.pendingScreen = screen?.key || null;
+    if (!screen) {
+      fv.screen.hidden = true;
+      fv.screenKey = null;
+    }
+    return;
+  }
+  if (fv.screenKey === screen.key) return;
+  fv.screenKey = screen.key;
+
+  const text = screen.lines.join('\n');
+  const title = /press enter|enter to continue|press any key/i.test(text)
+    ? 'Claude Code is waiting for you to continue'
+    : /log ?in|sign ?in|authenticat|api key|oauth/i.test(text)
+      ? 'Claude needs you to sign in'
+      : /trust/i.test(text) && /folder|files/i.test(text)
+        ? 'Claude Code is asking whether to trust this folder'
+        : 'The terminal needs you';
+  const keys = (label, seq, primary) => {
+    const b = el('button', primary ? 'btn primary' : 'btn', label);
+    b.type = 'button';
+    b.addEventListener('click', () => {
+      api.write(panel.ptyId, seq);
+      fv.input.focus();
+    });
+    return b;
+  };
+  fv.screen.innerHTML = '';
+  fv.screen.append(el('div', 'fv-screen-title', title));
+  fv.screen.append(el('pre', 'fv-screen-text', text));
+  const actions = el('div', 'fv-screen-actions');
+  for (const url of new Set(text.match(/https?:\/\/[^\s'"<>]+/g) || [])) {
+    const open = el('button', 'btn primary', 'Open the link');
+    open.type = 'button';
+    open.title = url;
+    open.addEventListener('click', () => openLinkTarget(url));
+    actions.append(open);
+  }
+  const hasLink = actions.childElementCount > 0;
+  actions.append(
+    keys(/press enter|enter to continue/i.test(text) ? 'Continue' : 'Enter', '\r', !hasLink),
+    keys('↑', '\x1b[A'),
+    keys('↓', '\x1b[B'),
+    keys('Back (Esc)', '\x1b')
+  );
+  const term = el('button', 'link-btn', 'Open the terminal');
+  term.type = 'button';
+  term.addEventListener('click', () => setFriendly(panel, false));
+  actions.append(term);
+  fv.screen.append(actions);
+  fv.screen.append(el('div', 'fv-screen-hint', 'If it asks you to paste a code, paste it in the box below and press Return.'));
+  fv.screen.lastChild.hidden = !/code/i.test(text);
+  fv.screen.hidden = false;
 }
 
 function setFriendly(panel, on) {
@@ -2892,6 +3057,7 @@ function scanApprovals() {
   for (const p of panels) {
     const asking = readApproval(p);
     p.needsApproval = Boolean(asking);
+    if (p.friendly) drawFriendlyScreen(p, asking ? null : readOtherScreen(p));
     const onScreen = visiblePanels().includes(p) || p === peeked;
     // In the friendly view the terminal is hidden, so its own questions show as a card too.
     const req = p === focused && onScreen && !p.friendly ? null : asking;

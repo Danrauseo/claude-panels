@@ -233,9 +233,12 @@ Each harness row on the Harnesses page of Settings has a **Friendly** box. Sessi
 - **What Claude is doing.** Each tool Claude uses becomes one plain line, such as "Reading a file", "Searching the files", "Running a command" or "Using Gmail", with a short detail beside it, such as the file's name or Claude's own description of the command. The step that is running pulses. Finished steps fold into one line, such as "Read 3 files and ran a command". Click it to see each step.
 - **Typing.** Type in the box at the bottom and press Return to send, or Shift+Return for a new line. **Stop** (or Esc) stops Claude, the same as Esc in the terminal.
 - **Approvals and questions** appear as the same cards as before, over the friendly view. A choice that needs typing, or **Go to it**, shows the terminal.
+- **Screens only the terminal has.** Some things never reach the saved conversation, such as signing in, "Press Enter to continue" or a menu such as `/model`. When the terminal shows something other than its usual input box, a card shows the bottom of the screen as plain text, with buttons for Enter, the arrow keys and Esc, a button to open any link on it, and a way to open the terminal. Text you send from the box at the bottom, such as a sign-in code, goes to the terminal as usual.
+- **Notes.** Slash commands you send and what they print, errors from Claude Code such as an expired login, and when you stopped Claude show as short notes in the conversation.
+- **Waiting for a reply.** Three pulsing dots sit where Claude's reply will appear. While Claude writes, the reply shows faintly under them as the terminal draws it, until the saved conversation catches up and the finished reply takes its place.
 - **Explain terms** works here too, with the same underlines and tooltips.
 
-The friendly view is built from the file Claude Code saves each session in, which the app reads twice a second and only from where it last stopped, so it costs very little. The terminal keeps running underneath and stops drawing while it is hidden. Replies appear a message at a time rather than word by word, because that is how Claude Code saves them, and "Working" shows while Claude is writing one. Anything that only appears in the terminal, such as slash command menus, needs ⌘E.
+The friendly view is built from the file Claude Code saves each session in, which the app reads twice a second and only from where it last stopped, so it costs very little. The terminal keeps running underneath and stops drawing while it is hidden. Claude Code saves a reply once it is written, which is why the reply in progress is read from the terminal's screen instead. ⌘E shows the terminal itself at any time.
 
 ## Explain terms
 
