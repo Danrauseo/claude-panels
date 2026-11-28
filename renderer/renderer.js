@@ -933,6 +933,29 @@ function friendlyTerms(panel, root) {
   }
 }
 
+// Claude Code's own slash commands, described plainly for the friendly view's suggestions. Those that
+// open a screen of their own say so, and those that close Claude Code ask first.
+const BUILTIN_COMMANDS = [
+  { name: '/help', description: 'Show what Claude Code can do' },
+  { name: '/clear', description: 'Start a fresh conversation in this terminal' },
+  { name: '/compact', description: 'Summarise the conversation so far, to make room' },
+  { name: '/context', description: 'Show how full the conversation is' },
+  { name: '/model', description: 'Choose which Claude model to use. Opens a menu' },
+  { name: '/resume', description: 'Go back to an earlier conversation. Opens a menu' },
+  { name: '/rename', description: 'Give this session a name' },
+  { name: '/status', description: 'Show your account, model and settings' },
+  { name: '/config', description: 'Open Claude Code settings. Opens a menu' },
+  { name: '/permissions', description: 'See and change what Claude may do without asking. Opens a menu' },
+  { name: '/mcp', description: 'See and manage connected tools. Opens a menu' },
+  { name: '/agents', description: 'See and manage helper agents. Opens a menu' },
+  { name: '/memory', description: "Edit Claude's memory files" },
+  { name: '/init', description: 'Write a CLAUDE.md file that describes this folder' },
+  { name: '/doctor', description: "Check Claude Code's setup for problems" },
+  { name: '/login', description: 'Sign in to Claude' },
+  { name: '/logout', description: 'Sign out of Claude Code', confirm: "This signs you out of Claude Code. You'll need to sign in again before Claude can work." },
+  { name: '/exit', description: 'Close Claude Code in this terminal', confirm: 'This closes Claude Code in this terminal. You can start it again from here.' },
+];
+
 function buildFriendly(panel) {
   const view = el('div', 'friendly');
   const log = el('div', 'fv-log');
@@ -961,11 +984,76 @@ function buildFriendly(panel) {
   foot.append(toTerminal);
   const screen = el('div', 'fv-screen');
   screen.hidden = true;
-  view.append(log, screen, compose, foot);
+  const suggest = el('div', 'fv-suggest');
+  suggest.hidden = true;
+  const confirmBox = el('div', 'fv-confirm');
+  confirmBox.hidden = true;
+  view.append(log, screen, suggest, confirmBox, compose, foot);
+
+  // Suggestions while you type a slash command, like the list the terminal shows.
+  let commands = null;
+  let shown = [];
+  let selected = 0;
+  const hideSuggest = () => {
+    suggest.hidden = true;
+    shown = [];
+  };
+  const drawSuggest = async () => {
+    const value = input.value;
+    if (!/^\/\S*$/.test(value)) return hideSuggest();
+    if (!commands) commands = [...BUILTIN_COMMANDS, ...((await api.listCommands(panel.cwd).catch(() => [])) || [])];
+    const want = value.toLowerCase();
+    const starts = commands.filter((c) => c.name.toLowerCase().startsWith(want));
+    const contains = starts.length ? [] : commands.filter((c) => c.name.toLowerCase().includes(want.slice(1)));
+    shown = [...starts, ...contains].slice(0, 8);
+    selected = Math.min(selected, Math.max(0, shown.length - 1));
+    suggest.innerHTML = '';
+    if (!shown.length) {
+      suggest.append(el('div', 'fv-suggest-none', `${value} isn't a command Claude Code knows here. Sending it will tell you so.`));
+    }
+    shown.forEach((c, i) => {
+      const row = el('div', `fv-suggest-row${i === selected ? ' on' : ''}`);
+      row.append(el('span', 'fv-suggest-name', c.name), el('span', 'fv-suggest-desc', c.description || ''));
+      row.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        complete(c);
+      });
+      suggest.append(row);
+    });
+    suggest.hidden = false;
+  };
+  const complete = (c) => {
+    input.value = c.name + ' ';
+    hideSuggest();
+    input.focus();
+  };
 
   const submit = () => {
     const text = input.value.replace(/\s+$/, '');
     if (!text || !panel.running) return;
+    hideSuggest();
+    // Commands that close Claude Code ask first, in plain words.
+    const risky = BUILTIN_COMMANDS.find((c) => c.confirm && c.name === text.split(/\s/)[0].toLowerCase());
+    if (risky && panel.fv.confirmed !== text) {
+      confirmBox.innerHTML = '';
+      const yes = el('button', 'btn primary', `Send ${risky.name}`);
+      const no = el('button', 'btn', 'Cancel');
+      yes.type = no.type = 'button';
+      yes.addEventListener('click', () => {
+        panel.fv.confirmed = text;
+        confirmBox.hidden = true;
+        submit();
+      });
+      no.addEventListener('click', () => {
+        confirmBox.hidden = true;
+        input.focus();
+      });
+      confirmBox.append(el('span', null, risky.confirm), yes, no);
+      confirmBox.hidden = false;
+      return;
+    }
+    panel.fv.confirmed = null;
+    confirmBox.hidden = true;
     // A message with several lines goes in as a paste, so its new lines do not send it early. Return is
     // sent a moment later, so Claude Code takes it as pressing Return rather than part of the text.
     api.write(panel.ptyId, text.includes('\n') ? `\x1b[200~${text}\x1b[201~` : text);
@@ -974,10 +1062,29 @@ function buildFriendly(panel) {
     input.style.height = '';
     panel.fv.stick = true;
     panel.fv.awaiting = true;
+    panel.fv.awaitingSince = Date.now();
+    panel.fv.sawWorking = false;
     drawFriendlyWorking(panel);
     log.scrollTop = log.scrollHeight;
   };
   input.addEventListener('keydown', (e) => {
+    if (!suggest.hidden && shown.length) {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        selected = (selected + (e.key === 'ArrowDown' ? 1 : shown.length - 1)) % shown.length;
+        drawSuggest();
+        return;
+      }
+      if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey && input.value.trim() !== shown[selected].name)) {
+        e.preventDefault();
+        complete(shown[selected]);
+        return;
+      }
+    }
+    if (e.key === 'Escape' && !suggest.hidden) {
+      hideSuggest();
+      return;
+    }
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
       submit();
@@ -986,10 +1093,14 @@ function buildFriendly(panel) {
     }
   });
   input.addEventListener('input', () => {
+    selected = 0;
+    confirmBox.hidden = true;
+    drawSuggest();
     input.style.height = '';
     input.style.height = `${Math.min(input.scrollHeight, 160)}px`;
   });
   send.addEventListener('click', submit);
+  input.addEventListener('blur', () => setTimeout(hideSuggest, 150));
   stop.addEventListener('click', () => api.write(panel.ptyId, '\x1b'));
   toTerminal.addEventListener('click', () => setFriendly(panel, false));
   log.addEventListener('click', (e) => {
@@ -1074,6 +1185,13 @@ function addFriendlyItems(panel, items) {
 function drawFriendlyWorking(panel) {
   const fv = panel.fv;
   if (!fv) return;
+  // After you send something the dots show straight away, before the light catches up. They stop once
+  // Claude has worked and finished, or after a few seconds if Claude never started, as after a slash
+  // command that only changes a setting or opens a screen of Claude Code's own.
+  if (fv.awaiting) {
+    if (panel.lightState === 'working') fv.sawWorking = true;
+    else if (fv.sawWorking || Date.now() - fv.awaitingSince > 5000) fv.awaiting = false;
+  }
   const busy = panel.running && (panel.lightState === 'working' || fv.awaiting);
   const stepRunning = fv.steps.size > 0;
   fv.working.hidden = !busy || stepRunning;
@@ -1142,9 +1260,12 @@ function readOtherScreen(p) {
   for (let y = 0; y < p.term.rows; y++) rows.push(b.getLine(b.viewportY + y)?.translateToString(true) ?? '');
   const filled = rows.filter((r) => r.trim());
   if (!filled.length) return null;
-  // Claude Code's input box: a line starting with > or ❯ near the bottom. A numbered choice is not it.
+  // Claude Code's input box: a line starting with > or ❯ with a line across the panel just above it. A
+  // numbered choice is not it, and neither is a shell prompt, which has no line above it.
   const promptRow = /^\s*[│┃]?\s*[>❯›](?!\s*\d+\.)(\s|$)/;
-  if (filled.slice(-10).some((r) => promptRow.test(r))) return null;
+  const rule = /^\s*[╭╰]?[─━]{10,}/;
+  const tail = filled.slice(-10);
+  if (tail.some((r, i) => promptRow.test(r) && (rule.test(tail[i - 1] || '') || rule.test(tail[i - 2] || '')))) return null;
 
   // Join rows that carry on into the next one, so a long link stays whole, and drop lines that are
   // only borders.
@@ -1162,7 +1283,10 @@ function readOtherScreen(p) {
   }
   if (carry) lines.push(carry);
   const shown = lines.slice(-12);
-  return shown.length ? { lines: shown, key: shown.join('\n') } : null;
+  // With no line across the panel anywhere, Claude Code is not drawing, so it has closed and left the
+  // terminal at the shell, as it does after /logout or /exit.
+  const closed = !rows.some((r) => rule.test(r)) && /[%$#❯>]\s*$/.test(filled.at(-1));
+  return shown.length ? { lines: shown, key: shown.join('\n'), closed } : null;
 }
 
 function drawFriendlyScreen(panel, screen) {
@@ -1182,7 +1306,9 @@ function drawFriendlyScreen(panel, screen) {
   fv.screenKey = screen.key;
 
   const text = screen.lines.join('\n');
-  const title = /press enter|enter to continue|press any key/i.test(text)
+  const title = screen.closed
+    ? 'Claude Code has closed in this terminal'
+    : /press enter|enter to continue|press any key/i.test(text)
     ? 'Claude Code is waiting for you to continue'
     : /log ?in|sign ?in|authenticat|api key|oauth/i.test(text)
       ? 'Claude needs you to sign in'
@@ -1221,9 +1347,36 @@ function drawFriendlyScreen(panel, screen) {
   term.addEventListener('click', () => setFriendly(panel, false));
   actions.append(term);
   fv.screen.append(actions);
-  fv.screen.append(el('div', 'fv-screen-hint', 'If it asks you to paste a code, paste it in the box below and press Return.'));
-  fv.screen.lastChild.hidden = !/code/i.test(text);
+  if (screen.closed) {
+    // Claude Code was started with the app's own settings, so start it again the way the app does:
+    // resume this session in a fresh terminal.
+    actions.innerHTML = '';
+    const again = el('button', 'btn primary', 'Start Claude again');
+    again.type = 'button';
+    again.addEventListener('click', () => restartFriendly(panel));
+    actions.append(again, term);
+    fv.screen.append(el('div', 'fv-screen-hint', 'This happens after /logout or /exit. Starting again picks up this conversation where it left off.'));
+  } else {
+    fv.screen.append(el('div', 'fv-screen-hint', 'If it asks you to paste a code, paste it in the box below and press Return.'));
+    fv.screen.lastChild.hidden = !/code/i.test(text);
+  }
   fv.screen.hidden = false;
+}
+
+// Starts Claude again in a terminal where it has closed, resuming the same session in the same folder.
+async function restartFriendly(panel) {
+  const { cwd, harnessName, sessionId, title } = panel;
+  const known = new Set((await api.listSessions()).map((s) => s.id));
+  if (panel.fvSession) api.unwatchFriendly(panel.fvSession);
+  if (panel.ptyId !== null) {
+    api.kill(panel.ptyId);
+    byPtyId.delete(panel.ptyId);
+  }
+  panel.resizeObserver?.disconnect();
+  panel.term?.dispose();
+  Object.assign(panel, { ptyId: null, term: null, fit: null, running: false, friendly: false, fv: null, fvSession: null, marker: null, keepFriendly: true });
+  panel.el.classList.remove('friendly-on');
+  await launch(panel, cwd, { resumeId: known.has(sessionId) ? sessionId : null, title, harnessName, name: panel.name });
 }
 
 function setFriendly(panel, on) {
@@ -1513,7 +1666,8 @@ async function launch(panel, dir, { resumeId = null, title = null, harnessName =
       advisor: harness?.advisor || settings.defaultAdvisor || '',
       explain: Boolean(harness?.explain),
     });
-    panel.friendlyAtStart = Boolean(harness?.friendly);
+    panel.friendlyAtStart = Boolean(harness?.friendly) || Boolean(panel.keepFriendly);
+    panel.keepFriendly = false;
     panel.ptyId = started.id;
     panel.sessionId = started.sessionId;
     panel.codeMode = Boolean(started.codeMode);
@@ -3057,7 +3211,10 @@ function scanApprovals() {
   for (const p of panels) {
     const asking = readApproval(p);
     p.needsApproval = Boolean(asking);
-    if (p.friendly) drawFriendlyScreen(p, asking ? null : readOtherScreen(p));
+    if (p.friendly) {
+      drawFriendlyScreen(p, asking ? null : readOtherScreen(p));
+      drawFriendlyWorking(p);
+    }
     const onScreen = visiblePanels().includes(p) || p === peeked;
     // In the friendly view the terminal is hidden, so its own questions show as a card too.
     const req = p === focused && onScreen && !p.friendly ? null : asking;

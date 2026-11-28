@@ -418,6 +418,46 @@ ipcMain.handle('friendly:unwatch', (_e, sessionId) => {
   friendlyWatches.delete(sessionId);
 });
 
+// Slash commands for the friendly view's suggestions: your own commands and skills, from your home
+// folder and the session's folder, with the description each one gives. Claude Code's built-in commands
+// are listed in the window.
+ipcMain.handle('commands:list', (_e, cwd) => {
+  const found = new Map();
+  const describe = (file) => {
+    try {
+      const head = fs.readFileSync(file, 'utf8').slice(0, 2000);
+      const m = /^---[\s\S]*?^description:\s*["']?(.+?)["']?\s*$/m.exec(head);
+      return m ? m[1].slice(0, 160) : '';
+    } catch {
+      return '';
+    }
+  };
+  const commands = (dir, prefix = '') => {
+    let entries = [];
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      if (e.isDirectory()) commands(path.join(dir, e.name), `${prefix}${e.name}:`);
+      else if (e.name.endsWith('.md')) {
+        const name = prefix + e.name.slice(0, -3);
+        if (!found.has(name)) found.set(name, describe(path.join(dir, e.name)));
+      }
+    }
+  };
+  const skills = (dir) => {
+    let entries = [];
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      const file = path.join(dir, e.name, 'SKILL.md');
+      if (e.isDirectory() && fs.existsSync(file) && !found.has(e.name)) found.set(e.name, describe(file));
+    }
+  };
+  for (const root of [cwd, os.homedir()].filter(Boolean)) {
+    commands(path.join(root, '.claude', 'commands'));
+    skills(path.join(root, '.claude', 'skills'));
+  }
+  return [...found.entries()].slice(0, 200).map(([name, description]) => ({ name: '/' + name, description }));
+});
+
 // ---------- Explain terms ----------
 
 // What the user has learned: for each folder and term, how often they have looked at its explanation
